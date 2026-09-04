@@ -19,31 +19,8 @@ export default function HomeScreen() {
   const canAnalyze =
     businessName.trim().length > 0 && location.trim().length > 0;
 
-  const handleAnalyze = async () => {
-  if (!canAnalyze) return;
-
-  try {
-    const response = await fetch(
-      'http://192.168.1.34:3000/analyse',
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          businessName: businessName.trim(),
-          location: location.trim(),
-        }),
-      }
-    );
-
-    if (!response.ok) {
-      throw new Error('Analysis request failed');
-    }
-
-    const data = await response.json();
-
-    console.log('Backend analysis:', data);
+  const handleAnalyze = () => {
+    if (!canAnalyze) return;
 
     router.push({
       pathname: '/analysing',
@@ -52,10 +29,7 @@ export default function HomeScreen() {
         location: location.trim(),
       },
     });
-  } catch (error) {
-    console.error('Backend connection error:', error);
-  }
-};
+  };
 
   return (
     <SafeAreaView style={styles.safeArea}>
@@ -76,7 +50,9 @@ export default function HomeScreen() {
 
           {/* Main introduction */}
           <View style={styles.hero}>
-            <Text style={styles.title}>Understand what customers really think.</Text>
+            <Text style={styles.title}>
+              Understand what customers really think.
+            </Text>
 
             <Text style={styles.subtitle}>
               Analyze reviews, identify recurring themes, compare competitors,

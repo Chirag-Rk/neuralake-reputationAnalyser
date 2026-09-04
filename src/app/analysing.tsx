@@ -1,11 +1,15 @@
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
-    SafeAreaView,
-    StyleSheet,
-    Text,
-    View,
+  ActivityIndicator,
+  Pressable,
+  SafeAreaView,
+  StyleSheet,
+  Text,
+  View,
 } from 'react-native';
+
+const API_URL = 'http://192.168.1.34:3000';
 
 const STEPS = [
   'Found business',
@@ -22,38 +26,136 @@ export default function AnalysingScreen() {
   }>();
 
   const [currentStep, setCurrentStep] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const [isRetrying, setIsRetrying] = useState(false);
+
+  const runAnalysis = async () => {
+    if (!businessName || !location) {
+      setError('Business name and location are required.');
+      return;
+    }
+
+    setError(null);
+    setIsRetrying(false);
+    setCurrentStep(0);
+
+    try {
+      // Step 1: business lookup / analysis request starts
+      setCurrentStep(0);
+
+      const response = await fetch(`${API_URL}/analyse`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          businessName: businessName.trim(),
+          location: location.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Server returned ${response.status}`);
+      }
+
+      const data = await response.json();
+
+      console.log('Analysis received:', data);
+
+      // Move through the analysis stages after the backend
+      // successfully returns the analysis.
+      setCurrentStep(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      setCurrentStep(2);
+
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      setCurrentStep(3);
+
+      await new Promise((resolve) => setTimeout(resolve, 350));
+      setCurrentStep(4);
+
+      await new Promise((resolve) => setTimeout(resolve, 500));
+
+      router.replace({
+        pathname: '/results',
+        params: {
+          businessName: businessName.trim(),
+          location: location.trim(),
+          analysis: JSON.stringify(data),
+        },
+      });
+    } catch (err) {
+      console.error('Backend connection error:', err);
+
+      setError(
+        'We could not complete the analysis. Please check that the backend is running and try again.'
+      );
+    }
+  };
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setCurrentStep((step) => {
-        if (step < STEPS.length - 1) {
-          return step + 1;
-        }
-
-        clearInterval(interval);
-
-        setTimeout(() => {
-          router.replace({
-            pathname: '/results',
-            params: {
-              businessName: businessName ?? 'Demo Business',
-              location: location ?? 'Bengaluru, India',
-            },
-          });
-        }, 800);
-
-        return step;
-      });
-    }, 1200);
-
-    return () => clearInterval(interval);
+    runAnalysis();
   }, [businessName, location]);
 
   const progress = ((currentStep + 1) / STEPS.length) * 100;
 
+  if (error) {
+    return (
+      <SafeAreaView style={styles.safeArea}>
+        <View style={styles.container}>
+          <View>
+            <Text style={styles.eyebrow}>REPUTATION INTELLIGENCE</Text>
+
+            <Text style={styles.title}>Analysis failed</Text>
+
+            <Text style={styles.businessName}>
+              {businessName ?? 'Unknown business'}
+            </Text>
+
+            <Text style={styles.location}>
+              {location ?? 'Unknown location'}
+            </Text>
+          </View>
+
+          <View style={styles.errorBox}>
+            <Text style={styles.errorTitle}>Something went wrong</Text>
+
+            <Text style={styles.errorText}>{error}</Text>
+
+            <Pressable
+              onPress={() => {
+                setIsRetrying(true);
+                runAnalysis();
+              }}
+              style={({ pressed }) => [
+                styles.retryButton,
+                pressed && styles.buttonPressed,
+              ]}
+            >
+              {isRetrying ? (
+                <ActivityIndicator color="#FFFFFF" />
+              ) : (
+                <Text style={styles.retryButtonText}>Try again</Text>
+              )}
+            </Pressable>
+
+            <Pressable
+              onPress={() => router.back()}
+              style={styles.backButton}
+            >
+              <Text style={styles.backButtonText}>Back</Text>
+            </Pressable>
+          </View>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
   return (
     <SafeAreaView style={styles.safeArea}>
       <View style={styles.container}>
+        {/* Header */}
         <View>
           <Text style={styles.eyebrow}>REPUTATION INTELLIGENCE</Text>
 
@@ -68,6 +170,7 @@ export default function AnalysingScreen() {
           </Text>
         </View>
 
+        {/* Progress */}
         <View style={styles.progressSection}>
           <View style={styles.progressHeader}>
             <Text style={styles.progressLabel}>
@@ -83,12 +186,15 @@ export default function AnalysingScreen() {
             <View
               style={[
                 styles.progressFill,
-                { width: `${progress}%` },
+                {
+                  width: `${progress}%`,
+                },
               ]}
             />
           </View>
         </View>
 
+        {/* Steps */}
         <View style={styles.stepsContainer}>
           {STEPS.map((step, index) => {
             const completed = index < currentStep;
@@ -129,11 +235,15 @@ export default function AnalysingScreen() {
           })}
         </View>
 
+        {/* Status */}
         <View style={styles.note}>
-          <Text style={styles.noteText}>
-            This demo is using sample analysis data. Real review
-            collection and analysis will be connected in the backend.
-          </Text>
+          <View style={styles.statusRow}>
+            <ActivityIndicator size="small" color="#2563EB" />
+
+            <Text style={styles.noteText}>
+              Gathering and analysing reputation data…
+            </Text>
+          </View>
         </View>
       </View>
     </SafeAreaView>
@@ -284,9 +394,70 @@ const styles = StyleSheet.create({
     borderColor: '#EAECF0',
   },
 
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+  },
+
   noteText: {
+    flex: 1,
     fontSize: 13,
     lineHeight: 19,
     color: '#667085',
+  },
+
+  errorBox: {
+    padding: 20,
+    borderRadius: 16,
+    backgroundColor: '#FFFFFF',
+    borderWidth: 1,
+    borderColor: '#EAECF0',
+  },
+
+  errorTitle: {
+    fontSize: 18,
+    fontWeight: '700',
+    color: '#111827',
+  },
+
+  errorText: {
+    marginTop: 10,
+    fontSize: 14,
+    lineHeight: 21,
+    color: '#667085',
+  },
+
+  retryButton: {
+    height: 52,
+    marginTop: 20,
+    borderRadius: 14,
+    backgroundColor: '#2563EB',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  retryButtonText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+
+  backButton: {
+    height: 52,
+    marginTop: 10,
+    borderRadius: 14,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  backButtonText: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#344054',
+  },
+
+  buttonPressed: {
+    opacity: 0.8,
   },
 });
