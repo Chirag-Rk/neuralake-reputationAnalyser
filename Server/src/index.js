@@ -1,8 +1,14 @@
+require('dotenv').config();
+
 const express = require('express');
 const cors = require('cors');
 
 const app = express();
 const PORT = 3000;
+
+const GOOGLE_PLACES_API_KEY = process.env.GOOGLE_PLACES_API_KEY;
+const GOOGLE_PLACES_LEGACY_API_KEY =
+  process.env.GOOGLE_PLACES_LEGACY_API_KEY;
 
 app.use(cors());
 app.use(express.json());
@@ -14,7 +20,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.post('/analyse', (req, res) => {
+app.post('/analyse', async (req, res) => {
   const { businessName, location } = req.body;
 
   if (!businessName || !location) {
@@ -23,130 +29,173 @@ app.post('/analyse', (req, res) => {
     });
   }
 
-  const analysis = {
-    business: {
-      name: businessName,
-      rating: 4.2,
-      reviewCount: 187,
-      lastReviewDate: '2026-09-01',
-    },
+  if (!GOOGLE_PLACES_API_KEY) {
+    return res.status(500).json({
+      error: 'Google Places API (New) key is not configured.',
+    });
+  }
 
-    sources: [
-      {
-        platform: 'demo',
-        reviewsCollected: 187,
-        method: 'hardcoded sample data',
-      },
-    ],
+  if (!GOOGLE_PLACES_LEGACY_API_KEY) {
+    return res.status(500).json({
+      error: 'Google Places API (Legacy) key is not configured.',
+    });
+  }
 
-    distribution: {
-      '5': 121,
-      '4': 38,
-      '3': 14,
-      '2': 7,
-      '1': 7,
-    },
+  try {
+    // ---------------------------------------------------------
+    // 1. FIND BUSINESS USING PLACES API (NEW)
+    // ---------------------------------------------------------
 
-    velocity: {
-      perMonth: 14.5,
-      trend: 'rising',
-    },
+    const searchResponse = await fetch(
+      'https://places.googleapis.com/v1/places:searchText',
+      {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Goog-Api-Key': GOOGLE_PLACES_API_KEY,
+          'X-Goog-FieldMask':
+            'places.id,places.displayName,places.formattedAddress',
+        },
+        body: JSON.stringify({
+          textQuery: `${businessName}, ${location}`,
+          maxResultCount: 5,
+        }),
+      }
+    );
 
-    themes: [
-      {
-        theme: 'Staff',
-        mentions: 46,
-        sentiment: 'positive',
-        quotes: [
-          'Friendly and knowledgeable staff.',
-        ],
-      },
-      {
-        theme: 'Results',
-        mentions: 39,
-        sentiment: 'positive',
-        quotes: [
-          'Customers frequently praise the results.',
-        ],
-      },
-      {
-        theme: 'Waiting time',
-        mentions: 31,
-        sentiment: 'negative',
-        quotes: [
-          'Waited 40 minutes past my appointment.',
-        ],
-      },
-      {
-        theme: 'Booking',
-        mentions: 18,
-        sentiment: 'mixed',
-        quotes: [
-          'Booking was easy but the appointment started late.',
-        ],
-      },
-    ],
+    const searchData = await searchResponse.json();
 
-    strengths: [
-      'Friendly and knowledgeable staff',
-      'Customers frequently praise results',
-    ],
+    if (!searchResponse.ok) {
+      console.error('Google Text Search error:', searchData);
 
-    weaknesses: [
-      'Waiting times are the most repeated complaint',
-      'Some customers mention appointment delays',
-    ],
+      return res.status(502).json({
+        error: 'Google Places search failed.',
+        details:
+          searchData.error?.message ?? 'Unknown Google API error.',
+      });
+    }
 
-    unanswered: [
-      {
-        reviewId: 'demo-review-001',
-        rating: 1,
-        text: 'Waited 40 minutes past my appointment. Nobody explained the delay.',
-        suggestedReply:
-          'We are sorry to hear about the delay and understand how frustrating that must have been. Thank you for bringing this to our attention.',
-      },
-    ],
+    const places = searchData.places ?? [];
 
-    competitors: [
-      {
-        name: 'Competitor A',
-        rating: 4.5,
-        reviewCount: 243,
-        responseRate: 81,
-      },
-      {
-        name: 'Competitor B',
-        rating: 4.0,
-        reviewCount: 156,
-        responseRate: 64,
-      },
-    ],
+    if (places.length === 0) {
+      return res.status(404).json({
+        error: `No business found for "${businessName}" in "${location}".`,
+      });
+    }
 
-    recommendations: [
-      {
-        action:
-          'Address the four recent unanswered one-star reviews.',
-        priority: 'high',
-        why: 'Recent unanswered negative reviews are an immediate reputation risk.',
-      },
-      {
-        action:
-          'Investigate appointment delays and waiting times.',
-        priority: 'high',
-        why: 'Waiting time is the most repeated negative theme.',
-      },
-      {
-        action:
-          'Use positive staff and results feedback in marketing.',
-        priority: 'medium',
-        why: 'These are recurring strengths that can support customer acquisition.',
-      },
-    ],
-  };
+    const place = places[0];
 
-  res.json(analysis);
+    console.log('FOUND BUSINESS:');
+    console.log(JSON.stringify(place, null, 2));
+
+    // ---------------------------------------------------------
+    // 2. GET RATING + REVIEWS USING PLACES API (LEGACY)
+    // ---------------------------------------------------------
+
+    const legacyUrl = new URL(
+      'https://maps.googleapis.com/maps/api/place/details/json'
+    );
+
+    legacyUrl.searchParams.set('place_id', place.id);
+    legacyUrl.searchParams.set(
+      'fields',
+      'place_id,name,formatted_address,rating,user_ratings_total,reviews'
+    );
+    legacyUrl.searchParams.set('reviews_sort', 'newest');
+    legacyUrl.searchParams.set(
+      'key',
+      GOOGLE_PLACES_LEGACY_API_KEY
+    );
+
+    const legacyResponse = await fetch(legacyUrl);
+
+    const legacyData = await legacyResponse.json();
+
+    console.log('LEGACY GOOGLE STATUS:', legacyResponse.status);
+    console.log(
+      'LEGACY GOOGLE RESPONSE:',
+      JSON.stringify(legacyData, null, 2)
+    );
+
+    if (!legacyResponse.ok) {
+      return res.status(502).json({
+        error: 'Google Places Legacy request failed.',
+        details:
+          legacyData.error_message ??
+          'Unknown Google API error.',
+      });
+    }
+
+    if (legacyData.status !== 'OK') {
+      return res.status(502).json({
+        error: 'Google Places Legacy returned an error.',
+        details:
+          legacyData.error_message ??
+          legacyData.status ??
+          'Unknown Google API error.',
+      });
+    }
+
+    const details = legacyData.result ?? {};
+
+    const reviews = details.reviews ?? [];
+
+    // ---------------------------------------------------------
+    // 3. RETURN NORMALIZED DATA TO MOBILE APP
+    // ---------------------------------------------------------
+
+    return res.json({
+      business: {
+        name:
+          details.name ??
+          place.displayName?.text ??
+          businessName,
+
+        address:
+          details.formatted_address ??
+          place.formattedAddress ??
+          location,
+
+        placeId:
+          details.place_id ??
+          place.id,
+
+        rating: details.rating ?? null,
+
+        reviewCount:
+          details.user_ratings_total ?? null,
+
+        lastReviewDate:
+          reviews.length > 0
+            ? reviews[0].time
+              ? new Date(reviews[0].time * 1000).toISOString()
+              : null
+            : null,
+      },
+
+      sources: [
+        {
+          platform: 'Google Places API (Legacy)',
+          reviewsCollected: reviews.length,
+          method:
+            'Places API (New) Text Search + Places API (Legacy) Place Details',
+        },
+      ],
+
+      reviews,
+    });
+  } catch (error) {
+    console.error('Analysis error:', error);
+
+    return res.status(500).json({
+      error: 'Unexpected server error.',
+      details: error.message,
+    });
+  }
 });
 
 app.listen(PORT, '0.0.0.0', () => {
-  console.log(`NeuraLake API running on http://localhost:${PORT}`);
+  console.log(
+    `NeuraLake API running on http://localhost:${PORT}`
+  );
 });
