@@ -18,6 +18,7 @@ type Theme = {
   mentions: number;
   sentiment: 'positive' | 'mixed' | 'negative';
   quotes: string[];
+  evidenceStrength?: 'limited' | 'moderate' | 'strong';
 };
 
 type Competitor = {
@@ -350,6 +351,16 @@ export default function ResultsScreen() {
     return (
       <SafeAreaView style={styles.safeArea}>
         <View style={styles.errorContainer}>
+          <View style={styles.errorIcon}>
+            <Text style={styles.errorIconText}>
+              !
+            </Text>
+          </View>
+
+          <Text style={styles.errorEyebrow}>
+            REPUTATION INTELLIGENCE
+          </Text>
+
           <Text style={styles.errorTitle}>
             Results unavailable
           </Text>
@@ -360,7 +371,10 @@ export default function ResultsScreen() {
           </Text>
 
           <Pressable
-            style={styles.newAnalysisButton}
+            style={({ pressed }) => [
+              styles.newAnalysisButton,
+              pressed && styles.buttonPressed,
+            ]}
             onPress={() =>
               router.replace('/')
             }
@@ -407,9 +421,9 @@ export default function ResultsScreen() {
   // =======================================================
   // RECOMMENDATIONS
   //
-  // Derived from the actual returned analysis.
-  // Recommendations should not overstate what the limited
-  // review sample can prove.
+  // Derived from actual returned analysis.
+  // Recommendations should not overstate limited
+  // review sample evidence.
   // =======================================================
 
   const recommendations = (() => {
@@ -423,27 +437,40 @@ export default function ResultsScreen() {
         .toLowerCase()
         .replace(/[^a-z0-9 ]/g, ' ')
         .split(/\s+/)
-        .filter((word) => word.length >= 4);
-
-    const isRelatedToWeakness = (themeName: string) => {
-      const themeWords = normalize(themeName);
-
-      return weaknesses.some((weakness) => {
-        const weaknessWords = normalize(weakness);
-
-        const sharedWords = themeWords.filter((word) =>
-          weaknessWords.includes(word)
+        .filter(
+          (word) =>
+            word.length >= 4
         );
 
-        return sharedWords.length >= 2;
-      });
+    const isRelatedToWeakness = (
+      themeName: string
+    ) => {
+      const themeWords =
+        normalize(themeName);
+
+      return weaknesses.some(
+        (weakness) => {
+          const weaknessWords =
+            normalize(weakness);
+
+          const sharedWords =
+            themeWords.filter(
+              (word) =>
+                weaknessWords.includes(
+                  word
+                )
+            );
+
+          return (
+            sharedWords.length >= 2
+          );
+        }
+      );
     };
 
     // =====================================================
     // WEAKNESSES
     // =====================================================
-    // A weakness from a limited sample is a reported concern,
-    // not automatically a recurring or high-severity problem.
 
     weaknesses
       .slice(0, 2)
@@ -458,18 +485,17 @@ export default function ResultsScreen() {
     // =====================================================
     // NEGATIVE THEMES
     // =====================================================
-    // Skip a negative theme when it describes the same issue
-    // already captured by a weakness. This avoids duplicate
-    // recommendations for the same customer concern.
 
     themes
       .filter(
         (theme) =>
-          theme.sentiment === 'negative'
+          theme.sentiment ===
+          'negative'
       )
       .sort(
         (a, b) =>
-          b.mentions - a.mentions
+          b.mentions -
+          a.mentions
       )
       .slice(0, 2)
       .forEach((theme) => {
@@ -501,56 +527,60 @@ export default function ResultsScreen() {
     themes
       .filter(
         (theme) =>
-          theme.sentiment === 'mixed'
+          theme.sentiment ===
+          'mixed'
       )
       .sort(
         (a, b) =>
-          b.mentions - a.mentions
+          b.mentions -
+          a.mentions
       )
       .slice(0, 1)
       .forEach((theme) => {
         result.push({
           priority: 'Medium',
-
           action:
-            theme.mentions >= 2
-              ? `Review the "${theme.theme}" experience because feedback is mixed across multiple available reviews.`
-              : `Review the "${theme.theme}" experience because the available feedback is mixed.`,
+            `Review the mixed feedback around "${theme.theme}" and identify what drives the positive and negative experiences.`,
         });
       });
 
     // =====================================================
     // POSITIVE THEMES
     // =====================================================
-    // Avoid saying "consistently" when only one review
-    // supports the positive signal.
 
-    themes
-      .filter(
-        (theme) =>
-          theme.sentiment === 'positive'
-      )
-      .sort(
-        (a, b) =>
-          b.mentions - a.mentions
-      )
-      .slice(0, 1)
-      .forEach((theme) => {
+    if (
+      result.length === 0 &&
+      themes.length > 0
+    ) {
+      const strongestPositive =
+        themes
+          .filter(
+            (theme) =>
+              theme.sentiment ===
+              'positive'
+          )
+          .sort(
+            (a, b) =>
+              b.mentions -
+              a.mentions
+          )[0];
+
+      if (strongestPositive) {
         result.push({
           priority: 'Medium',
-
           action:
-            theme.mentions >= 2
-              ? `Continue reinforcing "${theme.theme}", which is positively mentioned across multiple available reviews.`
-              : `Continue reinforcing "${theme.theme}", which received positive feedback in the available review sample.`,
+            `Protect and reinforce the positive customer experience around "${strongestPositive.theme}".`,
         });
-      });
+      }
+    }
 
     // =====================================================
     // FALLBACK
     // =====================================================
 
-    if (result.length === 0) {
+    if (
+      result.length === 0
+    ) {
       result.push({
         priority: 'Medium',
         action:
@@ -565,23 +595,50 @@ export default function ResultsScreen() {
   })();
 
   // =======================================================
-  // BEST / WORST COMPETITOR
+  // DERIVED VALUES
   // =======================================================
 
-  const bestCompetitor =
-    competitors.length > 0
-      ? [...competitors]
-          .filter(
-            (item) =>
-              typeof item.rating ===
-              'number'
-          )
-          .sort(
-            (a, b) =>
-              (b.rating ?? 0) -
-              (a.rating ?? 0)
-          )[0]
-      : null;
+  const distribution =
+    metrics.ratingDistribution;
+
+  const totalDistribution =
+    Object.values(
+      distribution
+    ).reduce(
+      (
+        total,
+        value
+      ) =>
+        total + value,
+      0
+    );
+
+  const latestReviewDate =
+    metrics.reviewDates.last ??
+    business.lastReviewDate;
+
+  const velocityUnavailable =
+    metrics.velocity.sampleBased ||
+    metrics.velocity.monthsCovered <
+      1 ||
+    metrics.velocity.trend ===
+      'insufficient_data' ||
+    metrics.velocity.perMonth ===
+      null;
+
+  const responseUnavailable =
+    analysis.responseRate ===
+      null ||
+    analysis.responseRateStatus ===
+      'unavailable';
+
+  const semanticAnalysisUnavailable =
+    !analysis.aiAnalysis ||
+    analysis.aiAnalysis.note
+      ?.toLowerCase()
+      .includes(
+        'unavailable'
+      );
 
   // =======================================================
   // RENDER
@@ -589,11 +646,13 @@ export default function ResultsScreen() {
 
   return (
     <SafeAreaView
-      style={styles.safeArea}
+      style={
+        styles.safeArea
+      }
     >
       <ScrollView
         contentContainerStyle={
-          styles.content
+          styles.container
         }
         showsVerticalScrollIndicator={
           false
@@ -603,250 +662,407 @@ export default function ResultsScreen() {
             HEADER
         ================================================= */}
 
-        <Text style={styles.eyebrow}>
-          REPUTATION RESULTS
-        </Text>
+        <View
+          style={
+            styles.header
+          }
+        >
+          <View style={styles.headerPill}>
+            <View style={styles.headerPillDot} />
 
-        <Text style={styles.businessName}>
-          {business.name ||
-            businessName ||
-            'Business'}
-        </Text>
+            <Text
+              style={
+                styles.headerEyebrow
+              }
+            >
+              REPUTATION INTELLIGENCE
+            </Text>
+          </View>
 
-        <Text style={styles.location}>
-          {business.address ||
-            location ||
-            'Location unavailable'}
-        </Text>
+          <Text
+            style={
+              styles.headerTitle
+            }
+          >
+            Analysis results
+          </Text>
+
+          <Text
+            style={
+              styles.headerSubtitle
+            }
+            numberOfLines={2}
+          >
+            {business.name}
+          </Text>
+
+          {location ? (
+            <Text
+              style={
+                styles.headerLocation
+              }
+              numberOfLines={1}
+            >
+              {location}
+            </Text>
+          ) : null}
+        </View>
 
         {/* =================================================
-            DATA QUALITY NOTICE
+            BUSINESS SUMMARY
         ================================================= */}
 
         <View
           style={
-            styles.dataQualityCard
+            styles.summaryCard
           }
         >
           <View
             style={
-              styles.dataQualityIcon
+              styles.summaryTop
             }
           >
-            <Text
+            <View
               style={
-                styles.dataQualityIconText
+                styles.summaryBusiness
               }
             >
-              i
-            </Text>
+              <View style={styles.businessTypePill}>
+                <Text style={styles.businessTypeText}>
+                  {capitalize(
+                    business.primaryType ||
+                      'Business'
+                  )}
+                </Text>
+              </View>
+
+              <Text
+                style={
+                  styles.summaryName
+                }
+                numberOfLines={2}
+              >
+                {business.name}
+              </Text>
+
+              <Text
+                style={
+                  styles.summaryAddress
+                }
+                numberOfLines={2}
+              >
+                {business.address ||
+                  'Address unavailable'}
+              </Text>
+            </View>
           </View>
 
           <View
             style={
-              styles.dataQualityContent
+              styles.summaryMetrics
             }
           >
-            <Text
-              style={
-                styles.dataQualityTitle
-              }
-            >
-              Analysis based on available reviews
-            </Text>
+            {/* RATING */}
 
-            <Text
+            <View
               style={
-                styles.dataQualityText
+                styles.summaryMetric
               }
             >
-              {dataQuality.note}
-            </Text>
+              <Text
+                style={
+                  styles.metricCaption
+                }
+              >
+                RATING
+              </Text>
+
+              <View style={styles.ratingValueRow}>
+                <Text
+                  style={
+                    styles.metricValue
+                  }
+                >
+                  {formatRating(
+                    business.rating
+                  )}
+                </Text>
+
+                <Text style={styles.summaryStar}>
+                  ★
+                </Text>
+              </View>
+
+              <Text
+                style={
+                  styles.metricLabel
+                }
+              >
+                Google rating
+              </Text>
+            </View>
+
+            {/* REVIEW COUNT */}
+
+            <View
+              style={
+                styles.summaryMetric
+              }
+            >
+              <Text
+                style={
+                  styles.metricCaption
+                }
+              >
+                REVIEWS
+              </Text>
+
+              <Text
+                style={
+                  styles.metricValue
+                }
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.75}
+              >
+                {formatNumber(
+                  business.reviewCount
+                )}
+              </Text>
+
+              <Text
+                style={
+                  styles.metricLabel
+                }
+              >
+                Google reviews
+              </Text>
+            </View>
+
+            {/* VELOCITY */}
+
+            <View
+              style={[
+                styles.summaryMetric,
+                styles.velocityMetric,
+              ]}
+            >
+              <Text
+                style={
+                  styles.metricCaption
+                }
+              >
+                VELOCITY
+              </Text>
+
+              <Text
+                style={
+                  velocityUnavailable
+                    ? styles.metricUnavailable
+                    : styles.metricValue
+                }
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.65}
+              >
+                {velocityUnavailable
+                  ? 'Insufficient data'
+                  : `~${metrics.velocity.perMonth}`}
+              </Text>
+
+              <Text
+                style={
+                  styles.metricLabel
+                }
+              >
+                {velocityUnavailable
+                  ? 'Monthly rate unavailable'
+                  : 'reviews / month'}
+              </Text>
+
+              {velocityUnavailable ? (
+                <View style={styles.sampleBadge}>
+                  <Text style={styles.sampleBadgeText}>
+                    Limited sample
+                  </Text>
+                </View>
+              ) : null}
+            </View>
           </View>
         </View>
 
         {/* =================================================
-            SUMMARY
+            AT A GLANCE
         ================================================= */}
 
         <View
-          style={styles.summaryCard}
+          style={
+            styles.section
+          }
         >
-          <View>
-            <Text style={styles.rating}>
-              {formatRating(
-                business.rating
-              )}
-            </Text>
+          <View style={styles.sectionHeadingRow}>
+            <View style={styles.sectionAccent} />
 
-            <Text style={styles.stars}>
-              ★★★★★
-            </Text>
+            <View>
+              <Text
+                style={
+                  styles.sectionTitle
+                }
+              >
+                At a glance
+              </Text>
 
-            <Text
-              style={
-                styles.reviewCount
-              }
-            >
-              {formatNumber(
-                business.reviewCount
-              )}{' '}
-              Google reviews
-            </Text>
+              <Text
+                style={
+                  styles.sectionSubtitle
+                }
+              >
+                The most useful signals from the available
+                review evidence.
+              </Text>
+            </View>
           </View>
 
           <View
             style={
-              styles.summaryDivider
-            }
-          />
-
-          <View
-            style={
-              styles.summaryMetric
+              styles.glanceGrid
             }
           >
-            <Text
-              style={
-                styles.metricValue
-              }
+            <View
+              style={[
+                styles.glanceCard,
+                styles.glanceCardBlue,
+              ]}
             >
-              {metrics.velocity.sampleBased ||
-              metrics.velocity.monthsCovered < 1 ||
-              metrics.velocity.trend === 'insufficient_data'
-                ? 'Insufficient data'
-                : `~${metrics.velocity.perMonth}`}
-            </Text>
+              <View style={styles.glanceIconCircle}>
+                <Text style={styles.glanceIconText}>
+                  +
+                </Text>
+              </View>
 
-            <Text
-              style={
-                styles.metricLabel
-              }
+              <Text
+                style={
+                  styles.glanceLabel
+                }
+              >
+                Strongest signal
+              </Text>
+
+              <Text
+                style={
+                  styles.glanceValue
+                }
+                numberOfLines={3}
+              >
+                {strengths.length >
+                0
+                  ? strengths[0]
+                  : 'No clear signal'}
+              </Text>
+            </View>
+
+            <View
+              style={[
+                styles.glanceCard,
+                styles.glanceCardNeutral,
+              ]}
             >
-              review velocity
-            </Text>
+              <View style={styles.glanceIconCircleNeutral}>
+                <Text style={styles.glanceIconTextNeutral}>
+                  !
+                </Text>
+              </View>
 
-            <Text
-              style={
-                styles.sampleLabel
-              }
+              <Text
+                style={
+                  styles.glanceLabel
+                }
+              >
+                Main concern
+              </Text>
+
+              <Text
+                style={
+                  styles.glanceValue
+                }
+                numberOfLines={3}
+              >
+                {weaknesses.length >
+                0
+                  ? weaknesses[0]
+                  : 'No clear weakness'}
+              </Text>
+            </View>
+
+            <View
+              style={[
+                styles.glanceCard,
+                styles.glanceCardNeutral,
+              ]}
             >
-              Limited review sample
-            </Text>
-          </View>
-        </View>
+              <View style={styles.glanceIconCircleNeutral}>
+                <Text style={styles.glanceIconTextNeutral}>
+                  ↗
+                </Text>
+              </View>
 
-        {/* =================================================
-            QUICK ASSESSMENT
-        ================================================= */}
+              <Text
+                style={
+                  styles.glanceLabel
+                }
+              >
+                Owner response
+              </Text>
 
-        <View
-          style={styles.assessmentCard}
-        >
-          <Text
-            style={styles.cardTitle}
-          >
-            At a glance
-          </Text>
+              <Text
+                style={
+                  styles.glanceValue
+                }
+                numberOfLines={2}
+              >
+                {responseUnavailable
+                  ? 'Unavailable'
+                  : `${analysis.responseRate}%`}
+              </Text>
 
-          <View
-            style={styles.assessmentRow}
-          >
-            <Text
-              style={
-                styles.assessmentLabel
-              }
+              <Text style={styles.glanceHelper}>
+                {responseUnavailable
+                  ? 'Not exposed by source'
+                  : 'Based on available data'}
+              </Text>
+            </View>
+
+            <View
+              style={[
+                styles.glanceCard,
+                styles.glanceCardNeutral,
+              ]}
             >
-              Strongest signal
-            </Text>
+              <View style={styles.glanceIconCircleNeutral}>
+                <Text style={styles.glanceIconTextNeutral}>
+                  ◷
+                </Text>
+              </View>
 
-            <Text
-              style={
-                styles.assessmentValue
-              }
-            >
-              {themes.length > 0
-                ? themes
-                    .filter(
-                      (theme) =>
-                        theme.sentiment ===
-                        'positive'
-                    )
-                    .sort(
-                      (a, b) =>
-                        b.mentions -
-                        a.mentions
-                    )[0]
-                    ?.theme ??
-                  'No clear signal'
-                : 'No clear signal'}
-            </Text>
-          </View>
+              <Text
+                style={
+                  styles.glanceLabel
+                }
+              >
+                Latest review
+              </Text>
 
-          <View
-            style={styles.assessmentRow}
-          >
-            <Text
-              style={
-                styles.assessmentLabel
-              }
-            >
-              Main issue
-            </Text>
-
-            <Text
-              style={
-                styles.assessmentValue
-              }
-            >
-              {weaknesses[0] ??
-                'No clear weakness identified'}
-            </Text>
-          </View>
-
-          <View
-            style={styles.assessmentRow}
-          >
-            <Text
-              style={
-                styles.assessmentLabel
-              }
-            >
-              Response rate
-            </Text>
-
-            <Text
-              style={
-                styles.assessmentValue
-              }
-            >
-              {analysis.responseRate !==
-              null
-                ? `${analysis.responseRate}%`
-                : 'Unavailable'}
-            </Text>
-          </View>
-
-          <View
-            style={styles.assessmentRow}
-          >
-            <Text
-              style={
-                styles.assessmentLabel
-              }
-            >
-              Latest review
-            </Text>
-
-            <Text
-              style={
-                styles.assessmentValue
-              }
-            >
-              {getRelativeDate(
-                business.lastReviewDate
-              )}
-            </Text>
+              <Text
+                style={
+                  styles.glanceValue
+                }
+                numberOfLines={2}
+              >
+                {getRelativeDate(
+                  latestReviewDate
+                )}
+              </Text>
+            </View>
           </View>
         </View>
 
@@ -855,83 +1071,133 @@ export default function ResultsScreen() {
         ================================================= */}
 
         <View
-          style={styles.section}
+          style={
+            styles.section
+          }
         >
-          <Text
+          <View style={styles.sectionHeadingRow}>
+            <View style={styles.sectionAccent} />
+
+            <View>
+              <Text
+                style={
+                  styles.sectionTitle
+                }
+              >
+                Rating distribution
+              </Text>
+
+              <Text
+                style={
+                  styles.sectionSubtitle
+                }
+              >
+                Distribution across the reviews available
+                from the source.
+              </Text>
+            </View>
+          </View>
+
+          <View
             style={
-              styles.sectionTitle
+              styles.distributionCard
             }
           >
-            Rating distribution
-          </Text>
+            {[
+              {
+                rating: 5,
+                count:
+                  distribution['5'],
+              },
+              {
+                rating: 4,
+                count:
+                  distribution['4'],
+              },
+              {
+                rating: 3,
+                count:
+                  distribution['3'],
+              },
+              {
+                rating: 2,
+                count:
+                  distribution['2'],
+              },
+              {
+                rating: 1,
+                count:
+                  distribution['1'],
+              },
+            ].map(
+              ({
+                rating,
+                count,
+              }) => {
+                const percentage =
+                  totalDistribution >
+                  0
+                    ? (count /
+                        totalDistribution) *
+                      100
+                    : 0;
 
-          <Text
-            style={
-              styles.sectionSubtitle
-            }
-          >
-            Available Google review sample
-          </Text>
+                return (
+                  <View
+                    key={
+                      rating
+                    }
+                    style={
+                      styles.ratingRow
+                    }
+                  >
+                    <Text
+                      style={
+                        styles.ratingLabel
+                      }
+                    >
+                      {rating}★
+                    </Text>
 
-          <RatingBar
-            label="5★"
-            value={
-              metrics.ratingDistribution[
-                '5'
-              ]
-            }
-            total={
-              metrics.reviewCount
-            }
-          />
+                    <View
+                      style={
+                        styles.ratingTrack
+                      }
+                    >
+                      <View
+                        style={[
+                          styles.ratingFill,
+                          {
+                            width: `${percentage}%`,
+                          },
+                        ]}
+                      />
+                    </View>
 
-          <RatingBar
-            label="4★"
-            value={
-              metrics.ratingDistribution[
-                '4'
-              ]
-            }
-            total={
-              metrics.reviewCount
-            }
-          />
+                    <Text
+                      style={
+                        styles.ratingNumber
+                      }
+                    >
+                      {count}
+                    </Text>
+                  </View>
+                );
+              }
+            )}
 
-          <RatingBar
-            label="3★"
-            value={
-              metrics.ratingDistribution[
-                '3'
-              ]
-            }
-            total={
-              metrics.reviewCount
-            }
-          />
+            <View style={styles.distributionFooter}>
+              <Text style={styles.distributionFooterText}>
+                Based on {formatNumber(totalDistribution)}{' '}
+                collected reviews
+              </Text>
 
-          <RatingBar
-            label="2★"
-            value={
-              metrics.ratingDistribution[
-                '2'
-              ]
-            }
-            total={
-              metrics.reviewCount
-            }
-          />
-
-          <RatingBar
-            label="1★"
-            value={
-              metrics.ratingDistribution[
-                '1'
-              ]
-            }
-            total={
-              metrics.reviewCount
-            }
-          />
+              <Text style={styles.distributionFooterText}>
+                {dataQuality.reviewsWithText}{' '}
+                with text
+              </Text>
+            </View>
+          </View>
         </View>
 
         {/* =================================================
@@ -939,50 +1205,71 @@ export default function ResultsScreen() {
         ================================================= */}
 
         <View
-          style={styles.velocityCard}
+          style={
+            styles.velocityCard
+          }
         >
-          <View>
-            <Text
-              style={
-                styles.velocityTitle
-              }
-            >
-              Review velocity
-            </Text>
+          <View style={styles.cardTopRow}>
+            <View style={styles.cardIconBlue}>
+              <Text style={styles.cardIconText}>
+                ↗
+              </Text>
+            </View>
 
-            <Text
-              style={
-                styles.velocitySubtitle
-              }
-            >
-              Limited Google review sample
-            </Text>
+            <View style={styles.cardTopText}>
+              <Text
+                style={
+                  styles.velocityTitle
+                }
+              >
+                Review velocity
+              </Text>
+
+              <Text
+                style={
+                  styles.velocitySubtitle
+                }
+              >
+                How quickly new reviews appear in the available
+                sample.
+              </Text>
+            </View>
           </View>
 
           <View
             style={
-              styles.velocityRight
+              styles.velocityMain
             }
           >
             <Text
               style={
-                styles.velocityValue
+                velocityUnavailable
+                  ? styles.velocityUnavailable
+                  : styles.velocityValue
               }
+              numberOfLines={1}
+              adjustsFontSizeToFit
+              minimumFontScale={0.7}
             >
-              {metrics.velocity.sampleBased ||
-              metrics.velocity.monthsCovered < 1 ||
-              metrics.velocity.trend === 'insufficient_data'
+              {velocityUnavailable
                 ? 'Insufficient data'
                 : `~${metrics.velocity.perMonth}`}
             </Text>
 
-            <Text
-              style={
-                styles.velocityUnit
-              }
-            >
-              Reliable monthly rate unavailable
-            </Text>
+            {!velocityUnavailable ? (
+              <Text
+                style={
+                  styles.velocityUnit
+                }
+              >
+                reviews / month
+              </Text>
+            ) : (
+              <Text style={styles.velocityUnavailableNote}>
+                Monthly rate unavailable from the limited Google
+                review sample.
+              </Text>
+            )}
           </View>
 
           <View
@@ -990,75 +1277,249 @@ export default function ResultsScreen() {
               styles.velocityStatus
             }
           >
+            <View style={styles.statusDot} />
+
             <Text
               style={
                 styles.velocityStatusText
               }
             >
-              Trend: Insufficient data from the available review sample
+              Trend:{' '}
+              {velocityUnavailable
+                ? 'Insufficient data from the available review sample'
+                : capitalize(
+                    metrics.velocity.trend
+                  )}
             </Text>
           </View>
         </View>
 
         {/* =================================================
-            CUSTOMER THEMES
+            THEMES
         ================================================= */}
 
-        <ExpandableSection
-          title="Customer themes"
-          subtitle="What customers talk about most"
-          expanded={showThemes}
+        <Pressable
+          style={
+            styles.expandable
+          }
           onPress={() =>
             setShowThemes(
               !showThemes
             )
           }
         >
-          {themes.length === 0 ? (
-            <EmptySection
-              text="There was not enough review text to identify recurring themes."
-            />
-          ) : (
-            themes.map(
-              (
-                theme,
-                index
-              ) => (
-                <ThemeRow
-                  key={`${theme.theme}-${index}`}
-                  theme={
-                    theme.theme
+          <View
+            style={
+              styles.expandableHeader
+            }
+          >
+            <View style={styles.sectionIconBlue}>
+              <Text style={styles.sectionIconText}>
+                ✦
+              </Text>
+            </View>
+
+            <View
+              style={
+                styles.expandableText
+              }
+            >
+              <Text
+                style={
+                  styles.sectionTitle
+                }
+              >
+                Recurring themes
+              </Text>
+
+              <Text
+                style={
+                  styles.sectionSubtitle
+                }
+              >
+                Topics appearing in the available review text.
+              </Text>
+            </View>
+
+            <Text
+              style={
+                styles.chevron
+              }
+            >
+              {showThemes
+                ? '⌃'
+                : '⌄'}
+            </Text>
+          </View>
+
+          {showThemes ? (
+            <View
+              style={
+                styles.expandedContent
+              }
+            >
+              {themes.length ===
+              0 ? (
+                <View
+                  style={
+                    styles.emptySection
                   }
-                  mentions={
-                    `${theme.mentions} ${
-                      theme.mentions === 1
-                        ? 'mention'
-                        : 'mentions'
-                    }`
-                  }
-                  sentiment={
-                    capitalize(
-                      theme.sentiment
-                    )
-                  }
-                  quotes={
-                    theme.quotes
-                  }
-                />
-              )
-            )
-          )}
-        </ExpandableSection>
+                >
+                  <View style={styles.emptyIcon}>
+                    <Text style={styles.emptyIconText}>
+                      i
+                    </Text>
+                  </View>
+
+                  <View style={styles.emptyTextContainer}>
+                    <Text style={styles.emptySectionTitle}>
+                      Insufficient review evidence
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.emptySectionText
+                      }
+                    >
+                      Only {dataQuality.reviewsWithText} reviews
+                      contained usable text, so recurring themes
+                      cannot be identified reliably.
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                themes.map(
+                  (
+                    theme,
+                    index
+                  ) => (
+                    <View
+                      key={`${theme.theme}-${index}`}
+                      style={
+                        styles.themeContainer
+                      }
+                    >
+                      <View
+                        style={
+                          styles.themeRow
+                        }
+                      >
+                        <View
+                          style={
+                            styles.themeTextContainer
+                          }
+                        >
+                          <Text
+                            style={
+                              styles.themeName
+                            }
+                          >
+                            {theme.theme}
+                          </Text>
+
+                          <Text
+                            style={
+                              styles.themeMentions
+                            }
+                          >
+                            {theme.mentions}{' '}
+                            {theme.mentions ===
+                            1
+                              ? 'mention'
+                              : 'mentions'}
+                          </Text>
+                        </View>
+
+                        <View
+                          style={[
+                            styles.sentimentBadge,
+                            theme.sentiment ===
+                            'positive'
+                              ? styles.sentimentBadgePositive
+                              : theme.sentiment ===
+                                'negative'
+                              ? styles.sentimentBadgeNegative
+                              : styles.sentimentBadgeMixed,
+                          ]}
+                        >
+                          <Text
+                            style={[
+                              styles.sentiment,
+                              theme.sentiment ===
+                              'positive'
+                                ? styles.positive
+                                : theme.sentiment ===
+                                  'negative'
+                                ? styles.negative
+                                : styles.mixed,
+                            ]}
+                          >
+                            {capitalize(
+                              theme.sentiment
+                            )}
+                          </Text>
+                        </View>
+                      </View>
+
+                      {theme.evidenceStrength ? (
+                        <Text
+                          style={
+                            styles.evidenceText
+                          }
+                        >
+                          Evidence:{' '}
+                          {capitalize(
+                            theme.evidenceStrength
+                          )}
+                        </Text>
+                      ) : null}
+
+                      {theme.quotes?.length >
+                      0 ? (
+                        <View
+                          style={
+                            styles.quoteContainer
+                          }
+                        >
+                          {theme.quotes
+                            .slice(
+                              0,
+                              2
+                            )
+                            .map(
+                              (
+                                quote,
+                                quoteIndex
+                              ) => (
+                                <Text
+                                  key={
+                                    quoteIndex
+                                  }
+                                  style={
+                                    styles.quoteText
+                                  }
+                                >
+                                  “{quote}”
+                                </Text>
+                              )
+                            )}
+                        </View>
+                      ) : null}
+                    </View>
+                  )
+                )
+              )}
+            </View>
+          ) : null}
+        </Pressable>
 
         {/* =================================================
             STRENGTHS
         ================================================= */}
 
-        <ExpandableSection
-          title="Strengths"
-          subtitle="What customers value"
-          expanded={
-            showStrengths
+        <Pressable
+          style={
+            styles.expandable
           }
           onPress={() =>
             setShowStrengths(
@@ -1066,38 +1527,127 @@ export default function ResultsScreen() {
             )
           }
         >
-          {strengths.length === 0 ? (
-            <EmptySection
-              text="No clear strengths were identified from the available review text."
-            />
-          ) : (
-            strengths.map(
-              (
-                strength,
-                index
-              ) => (
-                <InsightBullet
-                  key={`strength-${index}`}
-                  symbol="✓"
-                  text={
-                    strength
+          <View
+            style={
+              styles.expandableHeader
+            }
+          >
+            <View style={styles.sectionIconPositive}>
+              <Text style={styles.sectionIconTextPositive}>
+                +
+              </Text>
+            </View>
+
+            <View
+              style={
+                styles.expandableText
+              }
+            >
+              <Text
+                style={
+                  styles.sectionTitle
+                }
+              >
+                Strengths
+              </Text>
+
+              <Text
+                style={
+                  styles.sectionSubtitle
+                }
+              >
+                Positive signals supported by the available
+                review evidence.
+              </Text>
+            </View>
+
+            <Text
+              style={
+                styles.chevron
+              }
+            >
+              {showStrengths
+                ? '⌃'
+                : '⌄'}
+            </Text>
+          </View>
+
+          {showStrengths ? (
+            <View
+              style={
+                styles.expandedContent
+              }
+            >
+              {strengths.length ===
+              0 ? (
+                <View
+                  style={
+                    styles.emptySection
                   }
-                  positive
-                />
-              )
-            )
-          )}
-        </ExpandableSection>
+                >
+                  <View style={styles.emptyIcon}>
+                    <Text style={styles.emptyIconText}>
+                      i
+                    </Text>
+                  </View>
+
+                  <View style={styles.emptyTextContainer}>
+                    <Text style={styles.emptySectionTitle}>
+                      Insufficient review evidence
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.emptySectionText
+                      }
+                    >
+                      More usable review text is needed to establish
+                      reliable strengths.
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                strengths.map(
+                  (
+                    strength,
+                    index
+                  ) => (
+                    <View
+                      key={
+                        index
+                      }
+                      style={
+                        styles.insightBullet
+                      }
+                    >
+                      <View style={styles.insightSymbolPositive}>
+                        <Text style={styles.insightSymbolText}>
+                          +
+                        </Text>
+                      </View>
+
+                      <Text
+                        style={
+                          styles.insightText
+                        }
+                      >
+                        {strength}
+                      </Text>
+                    </View>
+                  )
+                )
+              )}
+            </View>
+          ) : null}
+        </Pressable>
 
         {/* =================================================
             WEAKNESSES
         ================================================= */}
 
-        <ExpandableSection
-          title="Weaknesses"
-          subtitle="Issues that may need attention"
-          expanded={
-            showWeaknesses
+        <Pressable
+          style={
+            styles.expandable
           }
           onPress={() =>
             setShowWeaknesses(
@@ -1105,37 +1655,127 @@ export default function ResultsScreen() {
             )
           }
         >
-          {weaknesses.length === 0 ? (
-            <EmptySection
-              text="No clear weaknesses were identified from the available review text."
-            />
-          ) : (
-            weaknesses.map(
-              (
-                weakness,
-                index
-              ) => (
-                <InsightBullet
-                  key={`weakness-${index}`}
-                  symbol="!"
-                  text={
-                    weakness
+          <View
+            style={
+              styles.expandableHeader
+            }
+          >
+            <View style={styles.sectionIconNegative}>
+              <Text style={styles.sectionIconTextNegative}>
+                −
+              </Text>
+            </View>
+
+            <View
+              style={
+                styles.expandableText
+              }
+            >
+              <Text
+                style={
+                  styles.sectionTitle
+                }
+              >
+                Weaknesses
+              </Text>
+
+              <Text
+                style={
+                  styles.sectionSubtitle
+                }
+              >
+                Reported concerns in the available review
+                evidence.
+              </Text>
+            </View>
+
+            <Text
+              style={
+                styles.chevron
+              }
+            >
+              {showWeaknesses
+                ? '⌃'
+                : '⌄'}
+            </Text>
+          </View>
+
+          {showWeaknesses ? (
+            <View
+              style={
+                styles.expandedContent
+              }
+            >
+              {weaknesses.length ===
+              0 ? (
+                <View
+                  style={
+                    styles.emptySection
                   }
-                />
-              )
-            )
-          )}
-        </ExpandableSection>
+                >
+                  <View style={styles.emptyIcon}>
+                    <Text style={styles.emptyIconText}>
+                      i
+                    </Text>
+                  </View>
+
+                  <View style={styles.emptyTextContainer}>
+                    <Text style={styles.emptySectionTitle}>
+                      Insufficient review evidence
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.emptySectionText
+                      }
+                    >
+                      More usable review text is needed to establish
+                      reliable weaknesses.
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                weaknesses.map(
+                  (
+                    weakness,
+                    index
+                  ) => (
+                    <View
+                      key={
+                        index
+                      }
+                      style={
+                        styles.insightBullet
+                      }
+                    >
+                      <View style={styles.insightSymbolNegative}>
+                        <Text style={styles.insightSymbolTextNegative}>
+                          −
+                        </Text>
+                      </View>
+
+                      <Text
+                        style={
+                          styles.insightText
+                        }
+                      >
+                        {weakness}
+                      </Text>
+                    </View>
+                  )
+                )
+              )}
+            </View>
+          ) : null}
+        </Pressable>
 
         {/* =================================================
-            NEEDS A REPLY
+            REPLIES
         ================================================= */}
 
-        <ExpandableSection
-          title="Needs a reply"
-          subtitle="Negative reviews with draft responses"
-          expanded={
-            showReplies
+        <Pressable
+          style={
+            styles.expandable
           }
           onPress={() =>
             setShowReplies(
@@ -1143,158 +1783,263 @@ export default function ResultsScreen() {
             )
           }
         >
-          {suggestedReplies.length ===
-          0 ? (
+          <View
+            style={
+              styles.expandableHeader
+            }
+          >
+            <View style={styles.sectionIconPurple}>
+              <Text style={styles.sectionIconTextPurple}>
+                ↩
+              </Text>
+            </View>
+
             <View
               style={
-                styles.noReplyCard
+                styles.expandableText
               }
             >
               <Text
                 style={
-                  styles.noReplyTitle
+                  styles.sectionTitle
                 }
               >
-                No eligible negative reviews
+                Review responses
               </Text>
 
               <Text
                 style={
-                  styles.noReplyText
+                  styles.sectionSubtitle
                 }
               >
-                No negative review with usable text was
-                available in the current Google sample.
-              </Text>
-
-              <Text
-                style={
-                  styles.unknownResponseNote
-                }
-              >
-                Note: Google Places does not expose whether
-                a business has already responded to a review.
+                Draft replies for eligible negative reviews.
               </Text>
             </View>
-          ) : (
-            suggestedReplies.map(
-              (review) => {
-                const expanded =
-                  selectedReplyId ===
-                  review.reviewId;
 
-                return (
-                  <View
-                    key={
-                      review.reviewId
-                    }
-                    style={
-                      styles.reviewCard
-                    }
-                  >
-                    <View
+            <Text
+              style={
+                styles.chevron
+              }
+            >
+              {showReplies
+                ? '⌃'
+                : '⌄'}
+            </Text>
+          </View>
+
+          {showReplies ? (
+            <View
+              style={
+                styles.expandedContent
+              }
+            >
+              {suggestedReplies.length ===
+              0 ? (
+                <View
+                  style={
+                    styles.noReplyCard
+                  }
+                >
+                  <View style={styles.noReplyIcon}>
+                    <Text style={styles.noReplyIconText}>
+                      ✓
+                    </Text>
+                  </View>
+
+                  <View style={styles.noReplyContent}>
+                    <Text
                       style={
-                        styles.reviewHeader
+                        styles.noReplyTitle
                       }
                     >
-                      <Text
-                        style={
-                          styles.ratingNegative
-                        }
-                      >
-                        ★ {review.rating}
-                      </Text>
-
-                      <Text
-                        style={
-                          styles.reviewDate
-                        }
-                      >
-                        Review
-                      </Text>
-                    </View>
+                      No eligible negative reviews
+                    </Text>
 
                     <Text
                       style={
-                        styles.reviewText
+                        styles.noReplyText
                       }
                     >
-                      "{review.text}"
+                      No negative review with usable review text
+                      was available for a response draft.
                     </Text>
-
-                    <Pressable
-                      style={
-                        styles.replyButton
-                      }
-                      onPress={() =>
-                        setSelectedReplyId(
-                          expanded
-                            ? null
-                            : review.reviewId
-                        )
-                      }
-                    >
-                      <Text
-                        style={
-                          styles.replyButtonText
-                        }
-                      >
-                        {expanded
-                          ? 'Hide suggested reply'
-                          : 'View suggested reply'}
-                      </Text>
-                    </Pressable>
-
-                    {expanded && (
-                      <View
-                        style={
-                          styles.replyBox
-                        }
-                      >
-                        <Text
-                          style={
-                            styles.replyBoxTitle
-                          }
-                        >
-                          Suggested response
-                        </Text>
-
-                        <Text
-                          style={
-                            styles.replyBoxText
-                          }
-                        >
-                          {review.suggestedReply}
-                        </Text>
-
-                        <Text
-                          style={
-                            styles.replyStatus
-                          }
-                        >
-                          Response status: unknown
-                        </Text>
-                      </View>
-                    )}
                   </View>
-                );
-              }
-            )
-          )}
-        </ExpandableSection>
+                </View>
+              ) : (
+                suggestedReplies.map(
+                  (
+                    review
+                  ) => {
+                    const isSelected =
+                      selectedReplyId ===
+                      review.reviewId;
+
+                    return (
+                      <View
+                        key={
+                          review.reviewId
+                        }
+                        style={
+                          styles.reviewCard
+                        }
+                      >
+                        <View
+                          style={
+                            styles.reviewHeader
+                          }
+                        >
+                          <View style={styles.reviewRatingBadge}>
+                            <Text
+                              style={
+                                styles.ratingNegative
+                              }
+                            >
+                              {review.rating}★
+                            </Text>
+                          </View>
+
+                          <Text
+                            style={
+                              styles.reviewDate
+                            }
+                          >
+                            {getRelativeDate(
+                              analysis.reviews?.find(
+                                (item) =>
+                                  item.id ===
+                                  review.reviewId
+                              )?.date
+                            )}
+                          </Text>
+                        </View>
+
+                        <Text
+                          style={
+                            styles.reviewText
+                          }
+                        >
+                          {review.text ||
+                            'Review text unavailable.'}
+                        </Text>
+
+                        {review.suggestedReply ? (
+                          <>
+                            <Pressable
+                              style={
+                                styles.replyButton
+                              }
+                              onPress={() =>
+                                setSelectedReplyId(
+                                  isSelected
+                                    ? null
+                                    : review.reviewId
+                                )
+                              }
+                            >
+                              <Text
+                                style={
+                                  styles.replyButtonText
+                                }
+                              >
+                                {isSelected
+                                  ? 'Hide suggested reply'
+                                  : 'View suggested reply'}
+                              </Text>
+
+                              <Text style={styles.replyButtonArrow}>
+                                {isSelected
+                                  ? '↑'
+                                  : '→'}
+                              </Text>
+                            </Pressable>
+
+                            {isSelected ? (
+                              <View
+                                style={
+                                  styles.replyBox
+                                }
+                              >
+                                <View style={styles.replyBoxHeader}>
+                                  <Text
+                                    style={
+                                      styles.replyBoxTitle
+                                    }
+                                  >
+                                    Suggested response
+                                  </Text>
+
+                                  <View style={styles.aiBadge}>
+                                    <Text style={styles.aiBadgeText}>
+                                      AI DRAFT
+                                    </Text>
+                                  </View>
+                                </View>
+
+                                <Text
+                                  style={
+                                    styles.replyBoxText
+                                  }
+                                >
+                                  {review.suggestedReply}
+                                </Text>
+
+                                <Text
+                                  style={
+                                    styles.replyStatus
+                                  }
+                                >
+                                  Review before publishing. No
+                                  automatic posting is performed.
+                                </Text>
+                              </View>
+                            ) : null}
+                          </>
+                        ) : null}
+
+                        {review.responseStatusNote ? (
+                          <Text
+                            style={
+                              styles.unknownResponseNote
+                            }
+                          >
+                            {review.responseStatusNote}
+                          </Text>
+                        ) : null}
+                      </View>
+                    );
+                  }
+                )
+              )}
+
+              {analysis.responseRateStatus ===
+              'unavailable' ? (
+                <View style={styles.infoNote}>
+                  <Text style={styles.infoNoteIcon}>
+                    i
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.infoNoteText
+                    }
+                  >
+                    Owner response status is not exposed by
+                    the available Google review data, so an
+                    accurate response rate cannot be calculated.
+                  </Text>
+                </View>
+              ) : null}
+            </View>
+          ) : null}
+        </Pressable>
 
         {/* =================================================
             COMPETITORS
         ================================================= */}
 
-        <ExpandableSection
-          title="Competitor comparison"
-          subtitle={
-            analysis.competitorSearch?.note ??
-            'Comparable businesses in the same area'
-          }
-          expanded={
-            showCompetitors
+        <Pressable
+          style={
+            styles.expandable
           }
           onPress={() =>
             setShowCompetitors(
@@ -1302,172 +2047,379 @@ export default function ResultsScreen() {
             )
           }
         >
-          {/* Current business */}
-
           <View
             style={
-              styles.competitorRow
+              styles.expandableHeader
             }
           >
+            <View style={styles.sectionIconOrange}>
+              <Text style={styles.sectionIconTextOrange}>
+                ⇄
+              </Text>
+            </View>
+
             <View
               style={
-                styles.competitorMain
+                styles.expandableText
               }
             >
               <Text
                 style={
-                  styles.youLabel
+                  styles.sectionTitle
                 }
               >
-                THIS BUSINESS
+                Competitor comparison
               </Text>
 
               <Text
                 style={
-                  styles.competitorName
+                  styles.sectionSubtitle
                 }
               >
-                {business.name}
-              </Text>
-
-              <Text
-                style={
-                  styles.competitorMetric
-                }
-              >
-                {formatRating(
-                  business.rating
-                )}{' '}
-                ★ ·{' '}
-                {formatNumber(
-                  business.reviewCount
-                )}{' '}
-                reviews
+                Nearby businesses found through Google Places.
               </Text>
             </View>
+
+            <Text
+              style={
+                styles.chevron
+              }
+            >
+              {showCompetitors
+                ? '⌃'
+                : '⌄'}
+            </Text>
           </View>
 
-          {competitors.length ===
-          0 ? (
-            <EmptySection
-              text="No comparable businesses were returned by Google."
-            />
-          ) : (
-            competitors.map(
-              (
-                competitor,
-                index
-              ) => (
-                <CompetitorRow
-                  key={
-                    competitor.placeId ||
-                    `${competitor.name}-${index}`
-                  }
-                  name={
-                    competitor.name
-                  }
-                  rating={
-                    formatRating(
-                      competitor.rating
-                    )
-                  }
-                  reviews={
-                    formatNumber(
-                      competitor.reviewCount
-                    )
-                  }
-                  velocity={
-                    competitor.velocity !== null &&
-                    competitor.reviewsSampled >= 30
-                      ? `~${competitor.velocity}/mo`
-                      : 'Insufficient data'
-                  }
-                  responseRate={
-                    competitor.responseRate !==
-                    null
-                      ? `${competitor.responseRate}%`
-                      : 'Unavailable'
-                  }
-                />
-              )
-            )
-          )}
-
-          {bestCompetitor && (
+          {showCompetitors ? (
             <View
               style={
-                styles.competitorInsight
+                styles.expandedContent
               }
             >
-              <Text
-                style={
-                  styles.competitorInsightTitle
-                }
-              >
-                Highest-rated comparable
-              </Text>
+              {competitors.length ===
+              0 ? (
+                <View
+                  style={
+                    styles.emptySection
+                  }
+                >
+                  <View style={styles.emptyIcon}>
+                    <Text style={styles.emptyIconText}>
+                      i
+                    </Text>
+                  </View>
 
-              <Text
-                style={
-                  styles.competitorInsightText
-                }
-              >
-                {bestCompetitor.name} at{' '}
-                {formatRating(
-                  bestCompetitor.rating
-                )}{' '}
-                ★
-              </Text>
+                  <View style={styles.emptyTextContainer}>
+                    <Text style={styles.emptySectionTitle}>
+                      No comparable businesses found
+                    </Text>
+
+                    <Text
+                      style={
+                        styles.emptySectionText
+                      }
+                    >
+                      No comparable nearby businesses were found
+                      through the configured Google Places search.
+                    </Text>
+                  </View>
+                </View>
+              ) : (
+                competitors.map(
+                  (
+                    competitor,
+                    index
+                  ) => {
+                    const competitorVelocity =
+                      competitor.velocity !==
+                        null &&
+                      competitor.reviewsSampled >=
+                        30
+                        ? `~${competitor.velocity}/mo`
+                        : 'Insufficient data';
+
+                    const competitorResponse =
+                      competitor.responseRate !==
+                      null
+                        ? `${competitor.responseRate}%`
+                        : 'Unavailable';
+
+                    return (
+                      <View
+                        key={
+                          competitor.placeId ||
+                          `${competitor.name}-${index}`
+                        }
+                        style={
+                          styles.competitorRow
+                        }
+                      >
+                        <View
+                          style={
+                            styles.competitorRank
+                          }
+                        >
+                          <Text style={styles.competitorRankText}>
+                            {index + 1}
+                          </Text>
+                        </View>
+
+                        <View
+                          style={
+                            styles.competitorMain
+                          }
+                        >
+                          <Text
+                            style={
+                              styles.competitorName
+                            }
+                            numberOfLines={2}
+                          >
+                            {competitor.name}
+                          </Text>
+
+                          <View style={styles.competitorRatingRow}>
+                            <Text
+                              style={
+                                styles.competitorRating
+                              }
+                            >
+                              {formatRating(
+                                competitor.rating
+                              )}
+                            </Text>
+
+                            <Text style={styles.competitorStar}>
+                              ★
+                            </Text>
+
+                            <Text
+                              style={
+                                styles.competitorReviewCount
+                              }
+                            >
+                              {formatNumber(
+                                competitor.reviewCount
+                              )}{' '}
+                              reviews
+                            </Text>
+                          </View>
+
+                          <View
+                            style={
+                              styles.competitorDetails
+                            }
+                          >
+                            <View style={styles.competitorMetricPill}>
+                              <Text style={styles.competitorMetricLabel}>
+                                Velocity
+                              </Text>
+
+                              <Text
+                                style={
+                                  styles.competitorMetricValue
+                                }
+                              >
+                                {competitorVelocity}
+                              </Text>
+                            </View>
+
+                            <View style={styles.competitorMetricPill}>
+                              <Text style={styles.competitorMetricLabel}>
+                                Response
+                              </Text>
+
+                              <Text
+                                style={
+                                  styles.competitorMetricValue
+                                }
+                              >
+                                {competitorResponse}
+                              </Text>
+                            </View>
+
+                            <View style={styles.competitorMetricPill}>
+                              <Text style={styles.competitorMetricLabel}>
+                                Sample
+                              </Text>
+
+                              <Text
+                                style={
+                                  styles.competitorMetricValue
+                                }
+                              >
+                                {competitor.reviewsSampled}
+                              </Text>
+                            </View>
+                          </View>
+                        </View>
+                      </View>
+                    );
+                  }
+                )
+              )}
+
+              {analysis.competitorSearch ? (
+                <View
+                  style={
+                    styles.competitorInsight
+                  }
+                >
+                  <Text
+                    style={
+                      styles.competitorInsightTitle
+                    }
+                  >
+                    Search method
+                  </Text>
+
+                  <Text
+                    style={
+                      styles.competitorInsightText
+                    }
+                  >
+                    {analysis.competitorSearch.note}
+                  </Text>
+                </View>
+              ) : null}
+
+              <View style={styles.infoNote}>
+                <Text style={styles.infoNoteIcon}>
+                  i
+                </Text>
+
+                <Text
+                  style={
+                    styles.infoNoteText
+                  }
+                >
+                  Competitor response rates are shown as
+                  unavailable when owner-response data is not
+                  exposed by the source.
+                </Text>
+              </View>
             </View>
-          )}
-
-          <Text
-            style={
-              styles.responseUnavailableNote
-            }
-          >
-            Response rates are unavailable because Google
-            Places does not expose business-owner response
-            status in the review data.
-          </Text>
-        </ExpandableSection>
+          ) : null}
+        </Pressable>
 
         {/* =================================================
             RECOMMENDATIONS
         ================================================= */}
 
-        <ExpandableSection
-          title="Recommended actions"
-          subtitle="Prioritized from the available evidence"
-          expanded={
-            showRecommendations
-          }
+        <Pressable
+          style={[
+            styles.expandable,
+            styles.recommendationCard,
+          ]}
           onPress={() =>
             setShowRecommendations(
               !showRecommendations
             )
           }
         >
-          {recommendations.map(
-            (
-              recommendation,
-              index
-            ) => (
-              <Recommendation
-                key={`recommendation-${index}`}
-                priority={
-                  recommendation.priority
+          <View
+            style={
+              styles.expandableHeader
+            }
+          >
+            <View style={styles.sectionIconRecommendation}>
+              <Text style={styles.sectionIconTextRecommendation}>
+                ✓
+              </Text>
+            </View>
+
+            <View
+              style={
+                styles.expandableText
+              }
+            >
+              <Text
+                style={
+                  styles.sectionTitle
                 }
-                action={
-                  recommendation.action
+              >
+                Recommended actions
+              </Text>
+
+              <Text
+                style={
+                  styles.sectionSubtitle
                 }
-              />
-            )
-          )}
-        </ExpandableSection>
+              >
+                Practical actions derived from the available
+                evidence.
+              </Text>
+            </View>
+
+            <Text
+              style={
+                styles.chevron
+              }
+            >
+              {showRecommendations
+                ? '⌃'
+                : '⌄'}
+            </Text>
+          </View>
+
+          {showRecommendations ? (
+            <View
+              style={
+                styles.expandedContent
+              }
+            >
+              {recommendations.map(
+                (
+                  recommendation,
+                  index
+                ) => (
+                  <View
+                    key={
+                      index
+                    }
+                    style={
+                      styles.recommendation
+                    }
+                  >
+                    <View
+                      style={[
+                        styles.priority,
+                        recommendation.priority ===
+                        'High'
+                          ? styles.priorityHigh
+                          : styles.priorityMedium,
+                      ]}
+                    >
+                      <Text
+                        style={[
+                          styles.priorityText,
+                          recommendation.priority ===
+                          'High'
+                            ? styles.priorityHighText
+                            : styles.priorityMediumText,
+                        ]}
+                      >
+                        {recommendation.priority}
+                      </Text>
+                    </View>
+
+                    <Text
+                      style={
+                        styles.recommendationText
+                      }
+                    >
+                      {recommendation.action}
+                    </Text>
+                  </View>
+                )
+              )}
+            </View>
+          ) : null}
+        </Pressable>
 
         {/* =================================================
-            SOURCE / ANALYSIS NOTE
+            DATA QUALITY
         ================================================= */}
 
         <View
@@ -1475,34 +2427,235 @@ export default function ResultsScreen() {
             styles.sourceCard
           }
         >
-          <Text
-            style={
-              styles.sourceTitle
-            }
-          >
-            Data source
-          </Text>
+          <View style={styles.sourceHeader}>
+            <View style={styles.sourceIcon}>
+              <Text style={styles.sourceIconText}>
+                ✓
+              </Text>
+            </View>
+
+            <View>
+              <Text
+                style={
+                  styles.sourceTitle
+                }
+              >
+                Data quality
+              </Text>
+
+              <Text style={styles.sourceSubtitle}>
+                How much evidence was available for this analysis.
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.dataQualityStats}>
+            <View style={styles.dataQualityStat}>
+              <Text style={styles.dataQualityValue}>
+                {formatNumber(
+                  dataQuality.totalBusinessReviews
+                )}
+              </Text>
+
+              <Text style={styles.dataQualityLabel}>
+                total reviews
+              </Text>
+            </View>
+
+            <View style={styles.dataQualityDivider} />
+
+            <View style={styles.dataQualityStat}>
+              <Text style={styles.dataQualityValue}>
+                {dataQuality.reviewsCollected}
+              </Text>
+
+              <Text style={styles.dataQualityLabel}>
+                collected
+              </Text>
+            </View>
+
+            <View style={styles.dataQualityDivider} />
+
+            <View style={styles.dataQualityStat}>
+              <Text style={styles.dataQualityValue}>
+                {dataQuality.reviewsWithText}
+              </Text>
+
+              <Text style={styles.dataQualityLabel}>
+                with text
+              </Text>
+            </View>
+          </View>
 
           <Text
             style={
               styles.sourceText
             }
           >
-            Google Places ·{' '}
-            {dataQuality.reviewsCollected}{' '}
-            reviews collected ·{' '}
-            {dataQuality.reviewsWithText}{' '}
-            with usable text
+            {dataQuality.note}
           </Text>
 
-          {analysis.aiAnalysis?.note && (
+          {dataQuality.velocityNote ? (
             <Text
               style={
                 styles.sourceText
               }
             >
-              {analysis.aiAnalysis.note}
+              {dataQuality.velocityNote}
             </Text>
+          ) : null}
+        </View>
+
+        {/* =================================================
+            AI STATUS
+        ================================================= */}
+
+        <View
+          style={[
+            styles.sourceCard,
+            semanticAnalysisUnavailable
+              ? styles.sourceCardWarning
+              : styles.sourceCardSuccess,
+          ]}
+        >
+          <View style={styles.sourceHeader}>
+            <View
+              style={[
+                styles.sourceIcon,
+                semanticAnalysisUnavailable
+                  ? styles.sourceIconWarning
+                  : styles.sourceIconSuccess,
+              ]}
+            >
+              <Text
+                style={[
+                  styles.sourceIconText,
+                  semanticAnalysisUnavailable
+                    ? styles.sourceIconTextWarning
+                    : styles.sourceIconTextSuccess,
+                ]}
+              >
+                {semanticAnalysisUnavailable
+                  ? '!'
+                  : '✦'}
+              </Text>
+            </View>
+
+            <View>
+              <Text
+                style={
+                  styles.sourceTitle
+                }
+              >
+                Analysis method
+              </Text>
+
+              <Text style={styles.sourceSubtitle}>
+                Semantic and deterministic analysis status.
+              </Text>
+            </View>
+          </View>
+
+          <Text
+            style={
+              styles.sourceText
+            }
+          >
+            {semanticAnalysisUnavailable
+              ? 'Semantic analysis was unavailable for this run. Deterministic review metrics are still available.'
+              : `Semantic analysis generated using ${
+                  analysis.aiAnalysis?.model ||
+                  'the configured AI model'
+                }.`}
+          </Text>
+        </View>
+
+        {/* =================================================
+            SOURCE
+        ================================================= */}
+
+        <View
+          style={
+            styles.sourceCard
+          }
+        >
+          <View style={styles.sourceHeader}>
+            <View style={styles.sourceIcon}>
+              <Text style={styles.sourceIconText}>
+                ◉
+              </Text>
+            </View>
+
+            <View>
+              <Text
+                style={
+                  styles.sourceTitle
+                }
+              >
+                Data source
+              </Text>
+
+              <Text style={styles.sourceSubtitle}>
+                Source, collection method and limitations.
+              </Text>
+            </View>
+          </View>
+
+          {analysis.sources?.map(
+            (
+              source,
+              index
+            ) => (
+              <View
+                key={
+                  `${source.platform}-${index}`
+                }
+                style={styles.sourceBlock}
+              >
+                <Text
+                  style={
+                    styles.sourcePlatform
+                  }
+                >
+                  {source.platform}
+                </Text>
+
+                <View style={styles.sourceTag}>
+                  <Text style={styles.sourceTagText}>
+                    {source.reviewsCollected}{' '}
+                    reviews collected
+                  </Text>
+                </View>
+
+                <Text
+                  style={
+                    styles.sourceText
+                  }
+                >
+                  Method: {source.method}
+                </Text>
+
+                {source.reliability ? (
+                  <Text
+                    style={
+                      styles.sourceText
+                    }
+                  >
+                    Reliability: {source.reliability}
+                  </Text>
+                ) : null}
+
+                {source.durability ? (
+                  <Text
+                    style={
+                      styles.sourceText
+                    }
+                  >
+                    Durability: {source.durability}
+                  </Text>
+                ) : null}
+              </View>
+            )
           )}
         </View>
 
@@ -1511,9 +2664,10 @@ export default function ResultsScreen() {
         ================================================= */}
 
         <Pressable
-          style={
-            styles.newAnalysisButton
-          }
+          style={({ pressed }) => [
+            styles.newAnalysisButton,
+            pressed && styles.buttonPressed,
+          ]}
           onPress={() =>
             router.replace('/')
           }
@@ -1525,406 +2679,19 @@ export default function ResultsScreen() {
           >
             Analyze another business
           </Text>
+
+          <Text style={styles.newAnalysisArrow}>
+            →
+          </Text>
         </Pressable>
+
+        <View
+          style={
+            styles.bottomSpacer
+          }
+        />
       </ScrollView>
     </SafeAreaView>
-  );
-}
-
-// =========================================================
-// RATING BAR
-// =========================================================
-
-function RatingBar({
-  label,
-  value,
-  total,
-}: {
-  label: string;
-  value: number;
-  total: number;
-}) {
-  const percentage =
-    total > 0
-      ? (value / total) * 100
-      : 0;
-
-  return (
-    <View
-      style={
-        styles.ratingRow
-      }
-    >
-      <Text
-        style={
-          styles.ratingLabel
-        }
-      >
-        {label}
-      </Text>
-
-      <View
-        style={
-          styles.ratingTrack
-        }
-      >
-        <View
-          style={[
-            styles.ratingFill,
-            {
-              width:
-                `${percentage}%`,
-            },
-          ]}
-        />
-      </View>
-
-      <Text
-        style={
-          styles.ratingNumber
-        }
-      >
-        {value}
-      </Text>
-    </View>
-  );
-}
-
-// =========================================================
-// THEME ROW
-// =========================================================
-
-function ThemeRow({
-  theme,
-  mentions,
-  sentiment,
-  quotes,
-}: {
-  theme: string;
-  mentions: string;
-  sentiment: string;
-  quotes: string[];
-}) {
-  return (
-    <View
-      style={
-        styles.themeContainer
-      }
-    >
-      <View
-        style={
-          styles.themeRow
-        }
-      >
-        <View
-          style={
-            styles.themeTextContainer
-          }
-        >
-          <Text
-            style={
-              styles.themeName
-            }
-          >
-            {theme}
-          </Text>
-
-          <Text
-            style={
-              styles.themeMentions
-            }
-          >
-            {mentions}
-          </Text>
-        </View>
-
-        <Text
-          style={[
-            styles.sentiment,
-            sentiment ===
-            'Positive'
-              ? styles.positive
-              : sentiment ===
-                'Negative'
-                ? styles.negative
-                : styles.mixed,
-          ]}
-        >
-          {sentiment}
-        </Text>
-      </View>
-
-      {quotes.length > 0 && (
-        <View
-          style={
-            styles.quoteContainer
-          }
-        >
-          {quotes
-            .slice(0, 2)
-            .map(
-              (
-                quote,
-                index
-              ) => (
-                <Text
-                  key={`${theme}-quote-${index}`}
-                  style={
-                    styles.quoteText
-                  }
-                >
-                  "{quote}"
-                </Text>
-              )
-            )}
-        </View>
-      )}
-    </View>
-  );
-}
-
-// =========================================================
-// EXPANDABLE SECTION
-// =========================================================
-
-function ExpandableSection({
-  title,
-  subtitle,
-  expanded,
-  onPress,
-  children,
-}: {
-  title: string;
-  subtitle: string;
-  expanded: boolean;
-  onPress: () => void;
-  children: React.ReactNode;
-}) {
-  return (
-    <View
-      style={
-        styles.expandable
-      }
-    >
-      <Pressable
-        onPress={onPress}
-        style={
-          styles.expandableHeader
-        }
-      >
-        <View
-          style={
-            styles.expandableText
-          }
-        >
-          <Text
-            style={
-              styles.sectionTitle
-            }
-          >
-            {title}
-          </Text>
-
-          <Text
-            style={
-              styles.sectionSubtitle
-            }
-          >
-            {subtitle}
-          </Text>
-        </View>
-
-        <Text
-          style={
-            styles.chevron
-          }
-        >
-          {expanded
-            ? '⌃'
-            : '›'}
-        </Text>
-      </Pressable>
-
-      {expanded && (
-        <View
-          style={
-            styles.expandedContent
-          }
-        >
-          {children}
-        </View>
-      )}
-    </View>
-  );
-}
-
-// =========================================================
-// INSIGHT BULLET
-// =========================================================
-
-function InsightBullet({
-  symbol,
-  text,
-  positive = false,
-}: {
-  symbol: string;
-  text: string;
-  positive?: boolean;
-}) {
-  return (
-    <View
-      style={
-        styles.insightBullet
-      }
-    >
-      <Text
-        style={[
-          styles.insightSymbol,
-          positive
-            ? styles.positiveSymbol
-            : styles.negativeSymbol,
-        ]}
-      >
-        {symbol}
-      </Text>
-
-      <Text
-        style={
-          styles.insightText
-        }
-      >
-        {text}
-      </Text>
-    </View>
-  );
-}
-
-// =========================================================
-// COMPETITOR ROW
-// =========================================================
-
-function CompetitorRow({
-  name,
-  rating,
-  reviews,
-  velocity,
-  responseRate,
-}: {
-  name: string;
-  rating: string;
-  reviews: string;
-  velocity: string;
-  responseRate: string;
-}) {
-  return (
-    <View
-      style={
-        styles.competitorRow
-      }
-    >
-      <Text
-        style={
-          styles.competitorName
-        }
-      >
-        {name}
-      </Text>
-
-      <Text
-        style={
-          styles.competitorMetric
-        }
-      >
-        {rating} ★ · {reviews} reviews
-      </Text>
-
-      <View
-        style={
-          styles.competitorDetails
-        }
-      >
-        <Text
-          style={
-            styles.competitorDetail
-          }
-        >
-          Velocity: {velocity}
-        </Text>
-
-        <Text
-          style={
-            styles.competitorDetail
-          }
-        >
-          Response: {responseRate}
-        </Text>
-      </View>
-    </View>
-  );
-}
-
-// =========================================================
-// RECOMMENDATION
-// =========================================================
-
-function Recommendation({
-  priority,
-  action,
-}: {
-  priority: string;
-  action: string;
-}) {
-  return (
-    <View
-      style={
-        styles.recommendation
-      }
-    >
-      <Text
-        style={[
-          styles.priority,
-          priority === 'High'
-            ? styles.priorityHigh
-            : styles.priorityMedium,
-        ]}
-      >
-        {priority}
-      </Text>
-
-      <Text
-        style={
-          styles.recommendationText
-        }
-      >
-        {action}
-      </Text>
-    </View>
-  );
-}
-
-// =========================================================
-// EMPTY SECTION
-// =========================================================
-
-function EmptySection({
-  text,
-}: {
-  text: string;
-}) {
-  return (
-    <View
-      style={
-        styles.emptySection
-      }
-    >
-      <Text
-        style={
-          styles.emptySectionText
-        }
-      >
-        {text}
-      </Text>
-    </View>
   );
 }
 
@@ -1934,84 +2701,85 @@ function EmptySection({
 
 const styles =
   StyleSheet.create({
+    // =====================================================
+    // BASE
+    // =====================================================
+
     safeArea: {
       flex: 1,
-      backgroundColor:
-        '#F7F8FA',
+      backgroundColor: '#F4F6FA',
     },
 
-    content: {
-      paddingHorizontal: 24,
+    container: {
+      paddingHorizontal: 20,
       paddingTop: 20,
-      paddingBottom: 40,
+      paddingBottom: 48,
     },
 
-    eyebrow: {
-      fontSize: 11,
-      fontWeight: '700',
-      letterSpacing: 1.4,
-      color: '#667085',
-    },
-
-    businessName: {
-      marginTop: 12,
-      fontSize: 30,
-      fontWeight: '700',
-      color: '#111827',
-    },
-
-    location: {
-      marginTop: 6,
-      fontSize: 14,
-      lineHeight: 20,
-      color: '#667085',
+    buttonPressed: {
+      opacity: 0.82,
+      transform: [
+        {
+          scale: 0.985,
+        },
+      ],
     },
 
     // =====================================================
-    // DATA QUALITY
+    // HEADER
     // =====================================================
 
-    dataQualityCard: {
-      marginTop: 20,
-      padding: 14,
-      borderRadius: 14,
-      backgroundColor: '#EFF6FF',
-      borderWidth: 1,
-      borderColor: '#BFDBFE',
+    header: {
+      marginBottom: 20,
+      paddingTop: 2,
+    },
+
+    headerPill: {
+      alignSelf: 'flex-start',
       flexDirection: 'row',
-    },
-
-    dataQualityIcon: {
-      width: 24,
-      height: 24,
-      borderRadius: 12,
       alignItems: 'center',
-      justifyContent: 'center',
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: 8,
+      backgroundColor: '#EFF6FF',
+    },
+
+    headerPillDot: {
+      width: 6,
+      height: 6,
+      borderRadius: 3,
       backgroundColor: '#2563EB',
+      marginRight: 6,
     },
 
-    dataQualityIconText: {
-      color: '#FFFFFF',
-      fontSize: 14,
+    headerEyebrow: {
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1.2,
+      color: '#2563EB',
+    },
+
+    headerTitle: {
+      marginTop: 10,
+      fontSize: 30,
+      lineHeight: 36,
+      fontWeight: '800',
+      color: '#101828',
+    },
+
+    headerSubtitle: {
+      marginTop: 6,
+      fontSize: 16,
+      lineHeight: 22,
       fontWeight: '700',
+      color: '#344054',
     },
 
-    dataQualityContent: {
-      flex: 1,
-      marginLeft: 10,
-    },
-
-    dataQualityTitle: {
+    headerLocation: {
+      marginTop: 3,
       fontSize: 13,
-      fontWeight: '700',
-      color: '#1E3A8A',
-    },
-
-    dataQualityText: {
-      marginTop: 4,
-      fontSize: 12,
-      lineHeight: 17,
-      color: '#475467',
+      lineHeight: 18,
+      color: '#667085',
     },
 
     // =====================================================
@@ -2019,163 +2787,348 @@ const styles =
     // =====================================================
 
     summaryCard: {
-      marginTop: 18,
       padding: 20,
-      borderRadius: 18,
+      borderRadius: 22,
       backgroundColor: '#FFFFFF',
       borderWidth: 1,
-      borderColor: '#EAECF0',
+      borderColor: '#E4E7EC',
+      shadowColor: '#101828',
+      shadowOffset: {
+        width: 0,
+        height: 4,
+      },
+      shadowOpacity: 0.05,
+      shadowRadius: 12,
+      elevation: 2,
+    },
+
+    summaryTop: {
       flexDirection: 'row',
-      alignItems: 'center',
+      alignItems: 'flex-start',
     },
 
-    rating: {
-      fontSize: 42,
-      fontWeight: '700',
-      color: '#111827',
+    summaryBusiness: {
+      flex: 1,
     },
 
-    stars: {
-      marginTop: -2,
-      fontSize: 18,
-      letterSpacing: 2,
-      color: '#F59E0B',
+    businessTypePill: {
+      alignSelf: 'flex-start',
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 7,
+      backgroundColor: '#F2F4F7',
     },
 
-    reviewCount: {
-      marginTop: 5,
-      fontSize: 13,
+    businessTypeText: {
+      fontSize: 9,
+      lineHeight: 12,
+      fontWeight: '800',
+      letterSpacing: 0.6,
+      textTransform: 'uppercase',
       color: '#667085',
     },
 
-    summaryDivider: {
-      width: 1,
-      height: 75,
-      marginHorizontal: 20,
-      backgroundColor: '#EAECF0',
+    summaryName: {
+      marginTop: 9,
+      fontSize: 19,
+      lineHeight: 25,
+      fontWeight: '800',
+      color: '#101828',
+    },
+
+    summaryAddress: {
+      marginTop: 6,
+      fontSize: 12,
+      lineHeight: 18,
+      color: '#667085',
+    },
+
+    summaryMetrics: {
+      marginTop: 22,
+      paddingTop: 17,
+      borderTopWidth: 1,
+      borderTopColor: '#EAECF0',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
     },
 
     summaryMetric: {
       flex: 1,
+      minWidth: 0,
+      paddingRight: 10,
+    },
+
+    velocityMetric: {
+      paddingRight: 0,
+    },
+
+    metricCaption: {
+      fontSize: 9,
+      lineHeight: 12,
+      fontWeight: '800',
+      letterSpacing: 0.9,
+      color: '#98A2B3',
+    },
+
+    ratingValueRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      marginTop: 4,
     },
 
     metricValue: {
-      fontSize: 25,
-      fontWeight: '700',
-      color: '#111827',
+      fontSize: 24,
+      lineHeight: 29,
+      fontWeight: '800',
+      color: '#101828',
+    },
+
+    summaryStar: {
+      marginLeft: 4,
+      marginTop: 1,
+      fontSize: 17,
+      color: '#F59E0B',
+    },
+
+    metricUnavailable: {
+      marginTop: 4,
+      fontSize: 15,
+      lineHeight: 19,
+      fontWeight: '800',
+      color: '#344054',
+      flexShrink: 1,
     },
 
     metricLabel: {
       marginTop: 4,
-      fontSize: 13,
-      lineHeight: 18,
-      color: '#667085',
-    },
-
-    sampleLabel: {
-      marginTop: 6,
-      fontSize: 11,
-      fontWeight: '700',
-      color: '#2563EB',
-    },
-
-    // =====================================================
-    // ASSESSMENT
-    // =====================================================
-
-    assessmentCard: {
-      marginTop: 16,
-      padding: 20,
-      borderRadius: 18,
-      backgroundColor: '#FFFFFF',
-      borderWidth: 1,
-      borderColor: '#EAECF0',
-    },
-
-    cardTitle: {
-      marginBottom: 14,
-      fontSize: 18,
-      fontWeight: '700',
-      color: '#111827',
-    },
-
-    assessmentRow: {
-      flexDirection: 'row',
-      justifyContent: 'space-between',
-      paddingVertical: 9,
-    },
-
-    assessmentLabel: {
-      fontSize: 14,
-      color: '#667085',
-    },
-
-    assessmentValue: {
-      maxWidth: '58%',
-      fontSize: 14,
+      fontSize: 10,
+      lineHeight: 14,
       fontWeight: '600',
-      color: '#344054',
-      textAlign: 'right',
+      color: '#667085',
+    },
+
+    sampleBadge: {
+      alignSelf: 'flex-start',
+      marginTop: 5,
+      paddingHorizontal: 7,
+      paddingVertical: 3,
+      borderRadius: 6,
+      backgroundColor: '#F2F4F7',
+    },
+
+    sampleBadgeText: {
+      fontSize: 8,
+      lineHeight: 11,
+      fontWeight: '800',
+      letterSpacing: 0.3,
+      color: '#667085',
     },
 
     // =====================================================
-    // SECTIONS
+    // SECTION
     // =====================================================
 
     section: {
-      marginTop: 28,
+      marginTop: 30,
+    },
+
+    sectionHeadingRow: {
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+
+    sectionAccent: {
+      width: 3,
+      minHeight: 25,
+      marginTop: 1,
+      marginRight: 10,
+      borderRadius: 2,
+      backgroundColor: '#2563EB',
     },
 
     sectionTitle: {
       fontSize: 19,
-      fontWeight: '700',
-      color: '#111827',
+      lineHeight: 24,
+      fontWeight: '800',
+      color: '#101828',
     },
 
     sectionSubtitle: {
-      marginTop: 3,
-      fontSize: 13,
+      marginTop: 4,
+      fontSize: 12,
       lineHeight: 18,
       color: '#667085',
     },
 
     // =====================================================
-    // RATING
+    // AT A GLANCE
     // =====================================================
+
+    glanceGrid: {
+      marginTop: 14,
+      flexDirection: 'row',
+      flexWrap: 'wrap',
+      gap: 10,
+    },
+
+    glanceCard: {
+      width: '48%',
+      minHeight: 128,
+      padding: 15,
+      borderRadius: 18,
+      backgroundColor: '#FFFFFF',
+      borderWidth: 1,
+      borderColor: '#E4E7EC',
+      shadowColor: '#101828',
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: 0.035,
+      shadowRadius: 8,
+      elevation: 1,
+    },
+
+    glanceCardBlue: {
+      borderColor: '#D9E8FF',
+      backgroundColor: '#FBFDFF',
+    },
+
+    glanceCardNeutral: {
+      backgroundColor: '#FFFFFF',
+    },
+
+    glanceIconCircle: {
+      width: 25,
+      height: 25,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#EFF6FF',
+    },
+
+    glanceIconText: {
+      fontSize: 15,
+      lineHeight: 17,
+      fontWeight: '800',
+      color: '#2563EB',
+    },
+
+    glanceIconCircleNeutral: {
+      width: 25,
+      height: 25,
+      borderRadius: 8,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#F2F4F7',
+    },
+
+    glanceIconTextNeutral: {
+      fontSize: 13,
+      lineHeight: 16,
+      fontWeight: '800',
+      color: '#667085',
+    },
+
+    glanceLabel: {
+      marginTop: 11,
+      fontSize: 10,
+      lineHeight: 13,
+      fontWeight: '800',
+      letterSpacing: 0.2,
+      color: '#667085',
+    },
+
+    glanceValue: {
+      marginTop: 6,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '700',
+      color: '#344054',
+    },
+
+    glanceHelper: {
+      marginTop: 3,
+      fontSize: 9,
+      lineHeight: 13,
+      color: '#98A2B3',
+    },
+
+    // =====================================================
+    // RATING DISTRIBUTION
+    // =====================================================
+
+    distributionCard: {
+      marginTop: 14,
+      padding: 18,
+      borderRadius: 18,
+      backgroundColor: '#FFFFFF',
+      borderWidth: 1,
+      borderColor: '#E4E7EC',
+      shadowColor: '#101828',
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: 0.03,
+      shadowRadius: 8,
+      elevation: 1,
+    },
 
     ratingRow: {
       flexDirection: 'row',
       alignItems: 'center',
-      marginTop: 13,
+      marginTop: 14,
+    },
+
+    ratingRowFirst: {
+      marginTop: 0,
     },
 
     ratingLabel: {
       width: 30,
       fontSize: 13,
-      fontWeight: '600',
+      fontWeight: '700',
       color: '#344054',
     },
 
     ratingTrack: {
       flex: 1,
-      height: 8,
+      height: 9,
       marginHorizontal: 10,
-      borderRadius: 4,
-      backgroundColor: '#E4E7EC',
+      borderRadius: 5,
+      backgroundColor: '#EAECF0',
       overflow: 'hidden',
     },
 
     ratingFill: {
       height: '100%',
-      borderRadius: 4,
+      borderRadius: 5,
       backgroundColor: '#2563EB',
     },
 
     ratingNumber: {
       width: 30,
       fontSize: 13,
+      fontWeight: '600',
       color: '#667085',
       textAlign: 'right',
+    },
+
+    distributionFooter: {
+      marginTop: 17,
+      paddingTop: 12,
+      borderTopWidth: 1,
+      borderTopColor: '#EAECF0',
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+
+    distributionFooterText: {
+      fontSize: 10,
+      lineHeight: 14,
+      fontWeight: '600',
+      color: '#98A2B3',
     },
 
     // =====================================================
@@ -2183,54 +3136,116 @@ const styles =
     // =====================================================
 
     velocityCard: {
-      marginTop: 24,
-      padding: 18,
-      borderRadius: 16,
+      marginTop: 20,
+      padding: 20,
+      borderRadius: 20,
       backgroundColor: '#FFFFFF',
       borderWidth: 1,
-      borderColor: '#EAECF0',
-      position: 'relative',
+      borderColor: '#E4E7EC',
+      shadowColor: '#101828',
+      shadowOffset: {
+        width: 0,
+        height: 3,
+      },
+      shadowOpacity: 0.035,
+      shadowRadius: 10,
+      elevation: 1,
+    },
+
+    cardTopRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+
+    cardIconBlue: {
+      width: 34,
+      height: 34,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#EFF6FF',
+    },
+
+    cardIconText: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: '#2563EB',
+    },
+
+    cardTopText: {
+      flex: 1,
+      marginLeft: 11,
     },
 
     velocityTitle: {
-      fontSize: 16,
-      fontWeight: '700',
-      color: '#111827',
+      fontSize: 17,
+      lineHeight: 22,
+      fontWeight: '800',
+      color: '#101828',
     },
 
     velocitySubtitle: {
       marginTop: 3,
       fontSize: 12,
+      lineHeight: 17,
       color: '#667085',
     },
 
-    velocityRight: {
-      position: 'absolute',
-      right: 18,
-      top: 16,
-      alignItems: 'flex-end',
+    velocityMain: {
+      marginTop: 17,
     },
 
     velocityValue: {
-      fontSize: 22,
-      fontWeight: '700',
-      color: '#111827',
+      fontSize: 30,
+      lineHeight: 36,
+      fontWeight: '800',
+      color: '#101828',
+    },
+
+    velocityUnavailable: {
+      fontSize: 24,
+      lineHeight: 30,
+      fontWeight: '800',
+      color: '#344054',
+      flexShrink: 1,
     },
 
     velocityUnit: {
+      marginTop: 2,
       fontSize: 11,
+      fontWeight: '600',
+      color: '#667085',
+    },
+
+    velocityUnavailableNote: {
+      marginTop: 4,
+      fontSize: 11,
+      lineHeight: 17,
       color: '#667085',
     },
 
     velocityStatus: {
-      marginTop: 16,
-      paddingTop: 12,
+      marginTop: 17,
+      paddingTop: 13,
       borderTopWidth: 1,
       borderTopColor: '#EAECF0',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+
+    statusDot: {
+      width: 7,
+      height: 7,
+      borderRadius: 4,
+      marginTop: 5,
+      marginRight: 8,
+      backgroundColor: '#98A2B3',
     },
 
     velocityStatusText: {
+      flex: 1,
       fontSize: 12,
+      lineHeight: 17,
       fontWeight: '600',
       color: '#667085',
     },
@@ -2240,12 +3255,20 @@ const styles =
     // =====================================================
 
     expandable: {
-      marginTop: 24,
-      padding: 18,
-      borderRadius: 18,
+      marginTop: 16,
+      padding: 20,
+      borderRadius: 20,
       backgroundColor: '#FFFFFF',
       borderWidth: 1,
-      borderColor: '#EAECF0',
+      borderColor: '#E4E7EC',
+      shadowColor: '#101828',
+      shadowOffset: {
+        width: 0,
+        height: 2,
+      },
+      shadowOpacity: 0.03,
+      shadowRadius: 9,
+      elevation: 1,
     },
 
     expandableHeader: {
@@ -2255,18 +3278,124 @@ const styles =
 
     expandableText: {
       flex: 1,
+      paddingRight: 8,
     },
 
     chevron: {
-      fontSize: 28,
+      width: 28,
+      textAlign: 'center',
+      fontSize: 25,
+      lineHeight: 28,
+      fontWeight: '600',
       color: '#667085',
+      marginLeft: 8,
     },
 
     expandedContent: {
       marginTop: 18,
       borderTopWidth: 1,
       borderTopColor: '#EAECF0',
-      paddingTop: 12,
+      paddingTop: 14,
+    },
+
+    // =====================================================
+    // SECTION ICONS
+    // =====================================================
+
+    sectionIconBlue: {
+      width: 34,
+      height: 34,
+      marginRight: 11,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#EFF6FF',
+    },
+
+    sectionIconText: {
+      fontSize: 17,
+      fontWeight: '800',
+      color: '#2563EB',
+    },
+
+    sectionIconPositive: {
+      width: 34,
+      height: 34,
+      marginRight: 11,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#ECFDF3',
+    },
+
+    sectionIconTextPositive: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: '#15803D',
+    },
+
+    sectionIconNegative: {
+      width: 34,
+      height: 34,
+      marginRight: 11,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#FEF3F2',
+    },
+
+    sectionIconTextNegative: {
+      fontSize: 18,
+      fontWeight: '800',
+      color: '#B42318',
+    },
+
+    sectionIconPurple: {
+      width: 34,
+      height: 34,
+      marginRight: 11,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#F4F3FF',
+    },
+
+    sectionIconTextPurple: {
+      fontSize: 17,
+      fontWeight: '800',
+      color: '#6941C6',
+    },
+
+    sectionIconOrange: {
+      width: 34,
+      height: 34,
+      marginRight: 11,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#FFFAEB',
+    },
+
+    sectionIconTextOrange: {
+      fontSize: 17,
+      fontWeight: '800',
+      color: '#B54708',
+    },
+
+    sectionIconRecommendation: {
+      width: 34,
+      height: 34,
+      marginRight: 11,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#EFF6FF',
+    },
+
+    sectionIconTextRecommendation: {
+      fontSize: 16,
+      fontWeight: '800',
+      color: '#2563EB',
     },
 
     // =====================================================
@@ -2274,11 +3403,11 @@ const styles =
     // =====================================================
 
     themeContainer: {
-      paddingVertical: 6,
+      paddingVertical: 8,
     },
 
     themeRow: {
-      paddingVertical: 10,
+      paddingVertical: 8,
       flexDirection: 'row',
       justifyContent: 'space-between',
       alignItems: 'center',
@@ -2291,19 +3420,47 @@ const styles =
 
     themeName: {
       fontSize: 15,
-      fontWeight: '600',
+      lineHeight: 20,
+      fontWeight: '700',
       color: '#344054',
     },
 
     themeMentions: {
       marginTop: 3,
-      fontSize: 13,
+      fontSize: 12,
       color: '#667085',
     },
 
-    sentiment: {
-      fontSize: 13,
+    evidenceText: {
+      marginTop: 5,
+      fontSize: 10,
+      lineHeight: 14,
       fontWeight: '700',
+      color: '#98A2B3',
+    },
+
+    sentimentBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 7,
+    },
+
+    sentimentBadgePositive: {
+      backgroundColor: '#ECFDF3',
+    },
+
+    sentimentBadgeNegative: {
+      backgroundColor: '#FEF3F2',
+    },
+
+    sentimentBadgeMixed: {
+      backgroundColor: '#FFFAEB',
+    },
+
+    sentiment: {
+      fontSize: 10,
+      lineHeight: 13,
+      fontWeight: '800',
     },
 
     positive: {
@@ -2319,8 +3476,10 @@ const styles =
     },
 
     quoteContainer: {
-      marginTop: 3,
+      marginTop: 7,
       paddingLeft: 12,
+      paddingTop: 3,
+      paddingBottom: 2,
       borderLeftWidth: 2,
       borderLeftColor: '#D0D5DD',
     },
@@ -2343,25 +3502,95 @@ const styles =
       paddingVertical: 10,
     },
 
-    insightSymbol: {
-      width: 24,
-      fontSize: 16,
-      fontWeight: '800',
+    insightSymbolPositive: {
+      width: 28,
+      height: 28,
+      borderRadius: 8,
+      marginRight: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#ECFDF3',
     },
 
-    positiveSymbol: {
+    insightSymbolNegative: {
+      width: 28,
+      height: 28,
+      borderRadius: 8,
+      marginRight: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#FEF3F2',
+    },
+
+    insightSymbolText: {
+      fontSize: 16,
+      lineHeight: 18,
+      fontWeight: '800',
       color: '#15803D',
     },
 
-    negativeSymbol: {
+    insightSymbolTextNegative: {
+      fontSize: 16,
+      lineHeight: 18,
+      fontWeight: '800',
       color: '#B42318',
     },
 
     insightText: {
       flex: 1,
+      paddingTop: 3,
       fontSize: 14,
       lineHeight: 20,
       color: '#475467',
+    },
+
+    // =====================================================
+    // EMPTY STATES
+    // =====================================================
+
+    emptySection: {
+      marginTop: 2,
+      padding: 14,
+      borderRadius: 14,
+      backgroundColor: '#F8FAFC',
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+
+    emptyIcon: {
+      width: 28,
+      height: 28,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#EFF6FF',
+    },
+
+    emptyIconText: {
+      fontSize: 13,
+      fontWeight: '800',
+      color: '#2563EB',
+    },
+
+    emptyTextContainer: {
+      flex: 1,
+      marginLeft: 10,
+    },
+
+    emptySectionTitle: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '800',
+      color: '#344054',
+    },
+
+    emptySectionText: {
+      marginTop: 4,
+      fontSize: 13,
+      lineHeight: 20,
+      color: '#667085',
     },
 
     // =====================================================
@@ -2371,25 +3600,34 @@ const styles =
     reviewCard: {
       marginTop: 12,
       padding: 16,
-      borderRadius: 14,
+      borderRadius: 16,
       backgroundColor: '#FFFFFF',
       borderWidth: 1,
-      borderColor: '#EAECF0',
+      borderColor: '#E4E7EC',
     },
 
     reviewHeader: {
       flexDirection: 'row',
       justifyContent: 'space-between',
+      alignItems: 'center',
+    },
+
+    reviewRatingBadge: {
+      paddingHorizontal: 8,
+      paddingVertical: 5,
+      borderRadius: 7,
+      backgroundColor: '#FEF3F2',
     },
 
     ratingNegative: {
-      fontSize: 14,
-      fontWeight: '700',
+      fontSize: 12,
+      lineHeight: 15,
+      fontWeight: '800',
       color: '#B42318',
     },
 
     reviewDate: {
-      fontSize: 13,
+      fontSize: 12,
       color: '#667085',
     },
 
@@ -2403,35 +3641,66 @@ const styles =
     replyButton: {
       marginTop: 14,
       alignSelf: 'flex-start',
+      minHeight: 38,
       paddingVertical: 9,
       paddingHorizontal: 12,
       borderRadius: 10,
       backgroundColor: '#EFF6FF',
+      flexDirection: 'row',
+      alignItems: 'center',
     },
 
     replyButtonText: {
-      fontSize: 13,
-      fontWeight: '700',
+      fontSize: 12,
+      fontWeight: '800',
+      color: '#2563EB',
+    },
+
+    replyButtonArrow: {
+      marginLeft: 7,
+      fontSize: 14,
+      fontWeight: '800',
       color: '#2563EB',
     },
 
     replyBox: {
       marginTop: 14,
-      padding: 14,
-      borderRadius: 12,
+      padding: 15,
+      borderRadius: 14,
       backgroundColor: '#F8FAFC',
       borderWidth: 1,
       borderColor: '#E2E8F0',
     },
 
+    replyBoxHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+
     replyBoxTitle: {
       fontSize: 13,
-      fontWeight: '700',
+      fontWeight: '800',
       color: '#344054',
     },
 
+    aiBadge: {
+      paddingHorizontal: 7,
+      paddingVertical: 4,
+      borderRadius: 6,
+      backgroundColor: '#F2F4F7',
+    },
+
+    aiBadgeText: {
+      fontSize: 8,
+      lineHeight: 11,
+      fontWeight: '800',
+      letterSpacing: 0.5,
+      color: '#667085',
+    },
+
     replyBoxText: {
-      marginTop: 8,
+      marginTop: 10,
       fontSize: 14,
       lineHeight: 21,
       color: '#475467',
@@ -2439,22 +3708,50 @@ const styles =
 
     replyStatus: {
       marginTop: 10,
-      fontSize: 11,
+      fontSize: 10,
+      lineHeight: 15,
       color: '#98A2B3',
     },
 
     noReplyCard: {
-      paddingVertical: 10,
+      padding: 14,
+      borderRadius: 14,
+      backgroundColor: '#F8FAFC',
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+
+    noReplyIcon: {
+      width: 30,
+      height: 30,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#ECFDF3',
+    },
+
+    noReplyIconText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: '#15803D',
+    },
+
+    noReplyContent: {
+      flex: 1,
+      marginLeft: 10,
     },
 
     noReplyTitle: {
-      fontSize: 15,
-      fontWeight: '700',
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '800',
       color: '#344054',
     },
 
     noReplyText: {
-      marginTop: 6,
+      marginTop: 5,
       fontSize: 13,
       lineHeight: 19,
       color: '#667085',
@@ -2462,9 +3759,39 @@ const styles =
 
     unknownResponseNote: {
       marginTop: 10,
-      fontSize: 12,
+      fontSize: 11,
       lineHeight: 17,
       color: '#98A2B3',
+    },
+
+    infoNote: {
+      marginTop: 14,
+      padding: 12,
+      borderRadius: 12,
+      backgroundColor: '#F8FAFC',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+
+    infoNoteIcon: {
+      width: 19,
+      height: 19,
+      borderRadius: 6,
+      textAlign: 'center',
+      lineHeight: 19,
+      fontSize: 10,
+      fontWeight: '800',
+      color: '#667085',
+      backgroundColor: '#EAECF0',
+      overflow: 'hidden',
+    },
+
+    infoNoteText: {
+      flex: 1,
+      marginLeft: 8,
+      fontSize: 11,
+      lineHeight: 17,
+      color: '#667085',
     },
 
     // =====================================================
@@ -2472,44 +3799,94 @@ const styles =
     // =====================================================
 
     competitorRow: {
-      paddingVertical: 13,
+      paddingVertical: 14,
       borderBottomWidth: 1,
       borderBottomColor: '#EAECF0',
+      flexDirection: 'row',
+      alignItems: 'flex-start',
+    },
+
+    competitorRank: {
+      width: 28,
+      height: 28,
+      marginRight: 10,
+      borderRadius: 9,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#F2F4F7',
+    },
+
+    competitorRankText: {
+      fontSize: 11,
+      fontWeight: '800',
+      color: '#667085',
     },
 
     competitorMain: {
       flex: 1,
     },
 
-    youLabel: {
-      marginBottom: 4,
-      fontSize: 10,
-      fontWeight: '800',
-      letterSpacing: 0.8,
-      color: '#2563EB',
-    },
-
     competitorName: {
-      fontSize: 15,
-      fontWeight: '700',
+      fontSize: 14,
+      lineHeight: 19,
+      fontWeight: '800',
       color: '#344054',
     },
 
-    competitorMetric: {
-      marginTop: 5,
+    competitorRatingRow: {
+      marginTop: 6,
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+
+    competitorRating: {
       fontSize: 14,
+      fontWeight: '800',
       color: '#344054',
+    },
+
+    competitorStar: {
+      marginLeft: 3,
+      fontSize: 12,
+      color: '#F59E0B',
+    },
+
+    competitorReviewCount: {
+      marginLeft: 6,
+      fontSize: 11,
+      color: '#667085',
     },
 
     competitorDetails: {
-      marginTop: 6,
+      marginTop: 10,
       flexDirection: 'row',
-      justifyContent: 'space-between',
+      gap: 6,
     },
 
-    competitorDetail: {
-      fontSize: 12,
-      color: '#667085',
+    competitorMetricPill: {
+      flex: 1,
+      minWidth: 0,
+      padding: 8,
+      borderRadius: 9,
+      backgroundColor: '#F8FAFC',
+      borderWidth: 1,
+      borderColor: '#EAECF0',
+    },
+
+    competitorMetricLabel: {
+      fontSize: 8,
+      lineHeight: 11,
+      fontWeight: '700',
+      textTransform: 'uppercase',
+      color: '#98A2B3',
+    },
+
+    competitorMetricValue: {
+      marginTop: 3,
+      fontSize: 10,
+      lineHeight: 14,
+      fontWeight: '700',
+      color: '#475467',
     },
 
     competitorInsight: {
@@ -2517,19 +3894,25 @@ const styles =
       padding: 13,
       borderRadius: 12,
       backgroundColor: '#F8FAFC',
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
     },
 
     competitorInsightTitle: {
-      fontSize: 12,
-      fontWeight: '700',
+      fontSize: 10,
+      lineHeight: 13,
+      fontWeight: '800',
+      letterSpacing: 0.5,
+      textTransform: 'uppercase',
       color: '#667085',
     },
 
     competitorInsightText: {
-      marginTop: 4,
-      fontSize: 14,
+      marginTop: 5,
+      fontSize: 12,
+      lineHeight: 18,
       fontWeight: '600',
-      color: '#344054',
+      color: '#475467',
     },
 
     responseUnavailableNote: {
@@ -2543,46 +3926,52 @@ const styles =
     // RECOMMENDATIONS
     // =====================================================
 
+    recommendationCard: {
+      borderColor: '#D9E8FF',
+    },
+
     recommendation: {
-      paddingVertical: 13,
+      paddingVertical: 14,
       borderBottomWidth: 1,
       borderBottomColor: '#EAECF0',
     },
 
     priority: {
-      fontSize: 11,
-      fontWeight: '800',
-      letterSpacing: 0.8,
-      textTransform: 'uppercase',
+      alignSelf: 'flex-start',
+      paddingHorizontal: 9,
+      paddingVertical: 5,
+      borderRadius: 7,
     },
 
     priorityHigh: {
-      color: '#B42318',
+      backgroundColor: '#FEF3F2',
     },
 
     priorityMedium: {
+      backgroundColor: '#FFFAEB',
+    },
+
+    priorityText: {
+      fontSize: 9,
+      lineHeight: 12,
+      fontWeight: '800',
+      letterSpacing: 0.7,
+      textTransform: 'uppercase',
+    },
+
+    priorityHighText: {
+      color: '#B42318',
+    },
+
+    priorityMediumText: {
       color: '#B54708',
     },
 
     recommendationText: {
-      marginTop: 5,
+      marginTop: 8,
       fontSize: 14,
-      lineHeight: 20,
+      lineHeight: 21,
       color: '#344054',
-    },
-
-    // =====================================================
-    // EMPTY
-    // =====================================================
-
-    emptySection: {
-      paddingVertical: 12,
-    },
-
-    emptySectionText: {
-      fontSize: 13,
-      lineHeight: 19,
-      color: '#667085',
     },
 
     // =====================================================
@@ -2590,25 +3979,147 @@ const styles =
     // =====================================================
 
     sourceCard: {
-      marginTop: 24,
-      padding: 16,
-      borderRadius: 14,
+      marginTop: 18,
+      padding: 18,
+      borderRadius: 18,
       backgroundColor: '#F8FAFC',
       borderWidth: 1,
-      borderColor: '#EAECF0',
+      borderColor: '#E2E8F0',
+    },
+
+    sourceCardWarning: {
+      backgroundColor: '#FFFCF5',
+      borderColor: '#FDE68A',
+    },
+
+    sourceCardSuccess: {
+      backgroundColor: '#F8FFFB',
+      borderColor: '#D1FAE5',
+    },
+
+    sourceHeader: {
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+
+    sourceIcon: {
+      width: 32,
+      height: 32,
+      borderRadius: 10,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#ECFDF3',
+    },
+
+    sourceIconWarning: {
+      backgroundColor: '#FEF3C7',
+    },
+
+    sourceIconSuccess: {
+      backgroundColor: '#ECFDF3',
+    },
+
+    sourceIconText: {
+      fontSize: 14,
+      fontWeight: '800',
+      color: '#15803D',
+    },
+
+    sourceIconTextWarning: {
+      color: '#B54708',
+    },
+
+    sourceIconTextSuccess: {
+      color: '#15803D',
     },
 
     sourceTitle: {
-      fontSize: 13,
-      fontWeight: '700',
+      fontSize: 14,
+      lineHeight: 18,
+      fontWeight: '800',
       color: '#344054',
     },
 
+    sourceSubtitle: {
+      marginTop: 2,
+      fontSize: 10,
+      lineHeight: 14,
+      color: '#98A2B3',
+    },
+
     sourceText: {
-      marginTop: 5,
+      marginTop: 9,
       fontSize: 12,
       lineHeight: 18,
       color: '#667085',
+    },
+
+    sourceBlock: {
+      marginTop: 15,
+      paddingTop: 14,
+      borderTopWidth: 1,
+      borderTopColor: '#E2E8F0',
+    },
+
+    sourcePlatform: {
+      fontSize: 13,
+      lineHeight: 18,
+      fontWeight: '800',
+      color: '#344054',
+    },
+
+    sourceTag: {
+      alignSelf: 'flex-start',
+      marginTop: 7,
+      paddingHorizontal: 8,
+      paddingVertical: 4,
+      borderRadius: 7,
+      backgroundColor: '#FFFFFF',
+      borderWidth: 1,
+      borderColor: '#E2E8F0',
+    },
+
+    sourceTagText: {
+      fontSize: 9,
+      lineHeight: 12,
+      fontWeight: '700',
+      color: '#667085',
+    },
+
+    dataQualityStats: {
+      marginTop: 15,
+      paddingVertical: 13,
+      borderTopWidth: 1,
+      borderBottomWidth: 1,
+      borderColor: '#E2E8F0',
+      flexDirection: 'row',
+      alignItems: 'center',
+    },
+
+    dataQualityStat: {
+      flex: 1,
+      alignItems: 'center',
+    },
+
+    dataQualityValue: {
+      fontSize: 18,
+      lineHeight: 22,
+      fontWeight: '800',
+      color: '#344054',
+    },
+
+    dataQualityLabel: {
+      marginTop: 3,
+      fontSize: 9,
+      lineHeight: 12,
+      fontWeight: '600',
+      color: '#98A2B3',
+    },
+
+    dataQualityDivider: {
+      width: 1,
+      height: 28,
+      backgroundColor: '#E2E8F0',
     },
 
     // =====================================================
@@ -2616,19 +4127,42 @@ const styles =
     // =====================================================
 
     newAnalysisButton: {
-      height: 54,
-      marginTop: 30,
-      borderRadius: 14,
+      minHeight: 56,
+      marginTop: 28,
+      paddingHorizontal: 18,
+      borderRadius: 16,
+      backgroundColor: '#2563EB',
       borderWidth: 1,
       borderColor: '#2563EB',
       alignItems: 'center',
       justifyContent: 'center',
+      flexDirection: 'row',
+      shadowColor: '#2563EB',
+      shadowOffset: {
+        width: 0,
+        height: 4,
+      },
+      shadowOpacity: 0.18,
+      shadowRadius: 8,
+      elevation: 2,
     },
 
     newAnalysisText: {
       fontSize: 15,
+      fontWeight: '800',
+      color: '#FFFFFF',
+    },
+
+    newAnalysisArrow: {
+      marginLeft: 9,
+      fontSize: 20,
+      lineHeight: 22,
       fontWeight: '700',
-      color: '#2563EB',
+      color: '#FFFFFF',
+    },
+
+    bottomSpacer: {
+      height: 20,
     },
 
     // =====================================================
@@ -2641,14 +4175,39 @@ const styles =
       justifyContent: 'center',
     },
 
+    errorIcon: {
+      width: 48,
+      height: 48,
+      borderRadius: 15,
+      alignItems: 'center',
+      justifyContent: 'center',
+      backgroundColor: '#FEF3F2',
+      marginBottom: 18,
+    },
+
+    errorIconText: {
+      fontSize: 22,
+      fontWeight: '800',
+      color: '#B42318',
+    },
+
+    errorEyebrow: {
+      fontSize: 10,
+      fontWeight: '800',
+      letterSpacing: 1.1,
+      color: '#2563EB',
+    },
+
     errorTitle: {
-      fontSize: 24,
-      fontWeight: '700',
-      color: '#111827',
+      marginTop: 7,
+      fontSize: 28,
+      lineHeight: 34,
+      fontWeight: '800',
+      color: '#101828',
     },
 
     errorText: {
-      marginTop: 8,
+      marginTop: 9,
       fontSize: 14,
       lineHeight: 21,
       color: '#667085',
