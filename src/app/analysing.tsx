@@ -9,7 +9,7 @@ import {
   View,
 } from 'react-native';
 
-const API_URL = 'http://192.168.1.34:3000';
+const API_URL = 'http://192.168.1.38:3000';
 
 const STEPS = [
   'Found business',
@@ -44,23 +44,46 @@ export default function AnalysingScreen() {
       setCurrentStep(0);
 
       const response = await fetch(`${API_URL}/analyse`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          businessName: businessName.trim(),
-          location: location.trim(),
-        }),
-      });
+  method: 'POST',
+  headers: {
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  },
+  body: JSON.stringify({
+    businessName: businessName.trim(),
+    location: location.trim(),
+  }),
+});
 
-      if (!response.ok) {
-        throw new Error(`Server returned ${response.status}`);
-      }
+console.log('Backend status:', response.status);
 
-      const data = await response.json();
+const rawText = await response.text();
 
-      console.log('Analysis received:', data);
+console.log(
+  'Backend response length:',
+  rawText.length
+);
+
+if (!response.ok) {
+  throw new Error(
+    `Server returned ${response.status}: ${rawText.slice(0, 300)}`
+  );
+}
+
+let data;
+
+try {
+  data = JSON.parse(rawText);
+} catch {
+  throw new Error(
+    `Backend returned invalid JSON. Response starts with: ${rawText.slice(
+      0,
+      300
+    )}`
+  );
+}
+
+console.log('Analysis received successfully');
 
       // Move through the analysis stages after the backend
       // successfully returns the analysis.
