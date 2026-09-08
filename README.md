@@ -92,7 +92,7 @@ The purpose of this project is to convert available customer feedback into struc
 
 The application combines deterministic analytics with AI-powered semantic analysis while maintaining clear boundaries around what the available data can actually support.
 
-Objectives
+# Objectives
 
 The primary objectives of the system are to:
 
