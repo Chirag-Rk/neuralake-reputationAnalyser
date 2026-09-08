@@ -73,36 +73,72 @@ app.get('/health', (req, res) => {
 
 function normalizeReviews(reviews) {
   return (reviews ?? [])
-    .map((review, index) => {
+    .map((review) => {
       const timestamp =
         Number(review.time);
 
+      const rating =
+        Number(review.rating);
+
+      const text =
+        typeof review.text === 'string'
+          ? review.text.trim()
+          : '';
+
+      const author =
+        typeof review.author_name === 'string' &&
+        review.author_name.trim()
+          ? review.author_name.trim()
+          : 'Anonymous';
+
+      const authorUrl =
+        typeof review.author_url === 'string'
+          ? review.author_url.trim()
+          : '';
+
+      const validTimestamp =
+        Number.isFinite(timestamp) &&
+        timestamp > 0;
+
+      const date =
+        validTimestamp
+          ? new Date(
+              timestamp * 1000
+            ).toISOString()
+          : null;
+
+      /*
+       * Google Places review objects do not provide a dedicated
+       * review ID in the Legacy Place Details response.
+       * Build a deterministic fallback from the reviewer, timestamp,
+       * and review text instead of using the array index.
+       */
+      const stableReviewKey =
+        [
+          authorUrl || author,
+          validTimestamp ? timestamp : '',
+          text,
+          Number.isFinite(rating) ? rating : '',
+        ].join('|');
+
       return {
         id:
-          review.author_url ??
-          `${review.author_name ?? 'anonymous'}-${timestamp}-${index}`,
+          `google-${Buffer.from(
+            stableReviewKey
+          ).toString('base64url')}`,
 
-        author:
-          review.author_name ??
-          'Anonymous',
+        author,
 
         rating:
-          typeof review.rating === 'number'
-            ? review.rating
+          Number.isFinite(rating) &&
+          rating >= 1 &&
+          rating <= 5
+            ? rating
             : null,
 
-        text:
-          typeof review.text === 'string'
-            ? review.text.trim()
-            : '',
+        text,
 
-        date:
-          Number.isFinite(timestamp) &&
-          timestamp > 0
-            ? new Date(
-                timestamp * 1000
-              ).toISOString()
-            : null,
+        date,
 
         source: 'Google',
       };
@@ -111,6 +147,32 @@ function normalizeReviews(reviews) {
       (review) =>
         review.rating !== null
     );
+}
+
+// =========================================================
+// DEDUPLICATE REVIEWS
+// =========================================================
+
+function deduplicateReviews(reviews) {
+  const uniqueReviews =
+    new Map();
+
+  for (const review of reviews ?? []) {
+    if (!review?.id) {
+      continue;
+    }
+
+    if (!uniqueReviews.has(review.id)) {
+      uniqueReviews.set(
+        review.id,
+        review
+      );
+    }
+  }
+
+  return Array.from(
+    uniqueReviews.values()
+  );
 }
 
 // =========================================================
@@ -249,13 +311,31 @@ function calculateReviewMetrics(reviews) {
         elapsedMonths.toFixed(2)
       );
 
-    perMonth =
-      Number(
-        (
-          datedReviews.length /
-          elapsedMonths
-        ).toFixed(2)
-      );
+    // -------------------------------------------------------
+    // Honest velocity calculation
+    //
+    // Do not extrapolate a monthly rate from a tiny sample
+    // collected over only a few days.
+    //
+    // A monthly velocity is considered meaningful only when:
+    // - at least 10 dated reviews are available
+    // - the sample spans at least 30 days
+    // -------------------------------------------------------
+
+    if (
+      datedReviews.length >= 10 &&
+      elapsedDays >= 30
+    ) {
+      perMonth =
+        Number(
+          (
+            datedReviews.length /
+            elapsedMonths
+          ).toFixed(2)
+        );
+    } else {
+      perMonth = null;
+    }
   }
 
   // -------------------------------------------------------
@@ -1342,6 +1422,149 @@ async function safeAnalyseReviewsWithGemini(
 }
 
 // =========================================================
+// REVIEW REPLY GENERATION
+// =========================================================
+
+async function generateReviewReplies(
+  reviews
+) {
+  const negativeReviews =
+    reviews.filter(
+      (review) =>
+        review.rating <= 3 &&
+        review.text.length > 0
+    );
+
+  if (
+    negativeReviews.length === 0
+  ) {
+    return [];
+  }
+
+  if (!GEMINI_API_KEY) {
+    throw new Error(
+      'Gemini API key is not configured.'
+    );
+  }
+
+  const {
+    GoogleGenAI,
+  } = await import(
+    '@google/genai'
+  );
+
+  const ai =
+    new GoogleGenAI({
+      apiKey:
+        GEMINI_API_KEY,
+    });
+
+  const replies = [];
+
+  for (
+    const review of negativeReviews
+  ) {
+    const prompt = `
+Draft a professional response to this negative customer review.
+
+Rules:
+- Write 2 to 3 sentences.
+- Be calm and non-defensive.
+- Acknowledge the customer's experience.
+- Do not make excuses.
+- Do not promise specific outcomes.
+- Do not mention private information.
+- Do not invent facts.
+- Match the seriousness of the review.
+- Do not mention the customer's name.
+- Do not claim that the business has already taken action unless the review says so.
+
+Review:
+${JSON.stringify({
+  rating: review.rating,
+  text: review.text,
+})}
+`;
+
+    const response =
+      await ai.interactions.create({
+        model:
+          GEMINI_MODEL,
+
+        input:
+          prompt,
+
+        response_format: {
+          type: 'text',
+          mime_type:
+            'application/json',
+
+          schema: {
+            type: 'object',
+
+            properties: {
+              suggestedReply: {
+                type: 'string',
+              },
+            },
+
+            required: [
+              'suggestedReply',
+            ],
+          },
+        },
+      });
+
+    const text =
+      response.output_text;
+
+    if (!text) {
+      continue;
+    }
+
+    const parsed =
+      JSON.parse(text);
+
+    if (
+      typeof parsed.suggestedReply ===
+      'string' &&
+      parsed.suggestedReply.trim()
+    ) {
+      replies.push({
+        reviewId:
+          review.id,
+
+        suggestedReply:
+          parsed.suggestedReply.trim(),
+      });
+    }
+  }
+
+  return replies;
+}
+
+// =========================================================
+// SAFE REVIEW REPLY GENERATION
+// =========================================================
+
+async function safeGenerateReviewReplies(
+  reviews
+) {
+  try {
+    return await generateReviewReplies(
+      reviews
+    );
+  } catch (error) {
+    console.error(
+      'Review reply generation failed:',
+      error.message
+    );
+
+    return [];
+  }
+}
+
+// =========================================================
 // COMPETITOR TYPES
 // =========================================================
 
@@ -1656,356 +1879,174 @@ async function getCompetitorReviews(
     );
   }
 
-  return normalizeReviews(
-    data.result?.reviews ??
-      []
+  return deduplicateReviews(
+    normalizeReviews(
+      data.result?.reviews ??
+        []
+    )
   );
 }
 
 // =========================================================
-// COMPETITOR COMPARISON
+// BUILD COMPETITOR COMPARISON
 // =========================================================
 
 async function buildCompetitorComparison(
-  competitorPlaces
+  competitors
 ) {
-  const competitors =
-    await Promise.all(
-      competitorPlaces.map(
-        async (
-          competitor
-        ) => {
-          const base = {
-            name:
-              competitor
-                .displayName
-                ?.text ??
-              'Unknown business',
-
-            placeId:
-              competitor.id,
-
-            address:
-              competitor
-                .formattedAddress ??
-              null,
-
-            rating:
-              competitor.rating ??
-              null,
-
-            reviewCount:
-              competitor
-                .userRatingCount ??
-              null,
-
-            primaryType:
-              competitor.primaryType ??
-              null,
-
-            velocity:
-              null,
-
-            velocityTrend:
-              'insufficient_data',
-
-            responseRate:
-              null,
-
-            responseRateStatus:
-              'unavailable',
-
-            responseRateNote:
-              'Google Places review data does not expose business-owner response status.',
-
-            reviewsSampled:
-              0,
-          };
-
-          try {
-            const reviews =
-              await getCompetitorReviews(
-                competitor.id
-              );
-
-            const velocity =
-              calculateSampleVelocity(
-                reviews
-              );
-
-            return {
-              ...base,
-
-              velocity:
-                velocity.perMonth,
-
-              velocityTrend:
-                velocity.trend,
-
-              reviewsSampled:
-                reviews.length,
-            };
-          } catch (error) {
-            console.error(
-              `Competitor review collection failed for ${base.name}:`,
-              error.message
-            );
-
-            return {
-              ...base,
-
-              processingStatus:
-                'partial',
-
-              processingNote:
-                'Competitor metadata was available, but its review sample could not be collected.',
-            };
-          }
-        }
-      )
-    );
-
-  return competitors;
-}
-
-// =========================================================
-// REVIEW REPLY SCHEMA
-// =========================================================
-
-const replyAnalysisSchema = {
-  type: 'object',
-
-  properties: {
-    replies: {
-      type: 'array',
-
-      items: {
-        type: 'object',
-
-        properties: {
-          reviewId: {
-            type: 'string',
-          },
-
-          suggestedReply: {
-            type: 'string',
-          },
-        },
-
-        required: [
-          'reviewId',
-          'suggestedReply',
-        ],
-      },
-    },
-  },
-
-  required: [
-    'replies',
-  ],
-};
-
-// =========================================================
-// GENERATE REVIEW REPLIES
-// =========================================================
-
-async function generateReviewReplies(
-  reviews
-) {
-  const negativeReviews =
-    reviews.filter(
-      (review) =>
-        review.rating <= 3 &&
-        review.text.length > 0
-    );
-
   if (
-    negativeReviews.length === 0
+    !Array.isArray(competitors) ||
+    competitors.length === 0
   ) {
     return [];
   }
 
-  if (!GEMINI_API_KEY) {
-    throw new Error(
-      'Gemini API key is not configured.'
-    );
-  }
+  const results = [];
 
-  const {
-    GoogleGenAI,
-  } = await import(
-    '@google/genai'
-  );
-
-  const ai =
-    new GoogleGenAI({
-      apiKey:
-        GEMINI_API_KEY,
-    });
-
-  const evidence =
-    negativeReviews.map(
-      (review) => ({
-        reviewId:
-          review.id,
-
-        rating:
-          review.rating,
-
-        text:
-          review.text,
-      })
-    );
-
-  const prompt = `
-Draft a professional response to each negative customer review.
-
-Rules:
-- 2 to 3 sentences.
-- Calm and non-defensive.
-- Acknowledge the customer's experience.
-- Do not make excuses.
-- Do not promise specific outcomes.
-- Do not mention private information.
-- Do not invent facts.
-- Match the seriousness of the review.
-- Do not claim the business has already taken an action unless the review says so.
-- Do not mention customer names.
-- Do not fabricate facts that are not in the review.
-
-Reviews:
-
-${JSON.stringify(
-  evidence,
-  null,
-  2
-)}
-`;
-
-  const response =
-    await ai.interactions.create({
-      model:
-        GEMINI_MODEL,
-
-      input:
-        prompt,
-
-      response_format: {
-        type: 'text',
-
-        mime_type:
-          'application/json',
-
-        schema:
-          replyAnalysisSchema,
-      },
-    });
-
-  const text =
-    response.output_text;
-
-  if (!text) {
-    throw new Error(
-      'Gemini returned an empty reply response.'
-    );
-  }
-
-  const parsed =
-    JSON.parse(text);
-
-  return (
-    parsed.replies ?? []
-  ).map(
-    (reply) => {
-      const original =
-        negativeReviews.find(
-          (review) =>
-            review.id ===
-            reply.reviewId
+  for (
+    const competitor of competitors
+  ) {
+    try {
+      const reviews =
+        await getCompetitorReviews(
+          competitor.id
         );
 
-      return {
-        reviewId:
-          reply.reviewId,
+      const metrics =
+        calculateReviewMetrics(
+          reviews
+        );
+
+      results.push({
+        name:
+          competitor.displayName?.text ??
+          competitor.name ??
+          'Unknown competitor',
 
         rating:
-          original?.rating ??
+          typeof competitor.rating ===
+          'number'
+            ? competitor.rating
+            : null,
+
+        reviewCount:
+          typeof competitor.userRatingCount ===
+          'number'
+            ? competitor.userRatingCount
+            : null,
+
+        responseRate:
           null,
 
-        text:
-          original?.text ??
-          '',
+        responseRateStatus:
+          'unavailable',
 
-        suggestedReply:
-          reply.suggestedReply,
+        velocity:
+          metrics.velocity?.perMonth ??
+          null,
 
-        responseStatus:
-          'unknown',
+        velocityTrend:
+          metrics.velocity?.trend ??
+          'insufficient_data',
 
-        responseStatusNote:
-          'Google Places does not expose whether the business has already responded.',
-      };
+        reviewsCollected:
+          reviews.length,
+
+        velocitySampleBased:
+          true,
+
+        note:
+          'Competitor review velocity is calculated from the limited Google review sample only.',
+      });
+    } catch (error) {
+      console.error(
+        `Competitor analysis failed for ${
+          competitor.displayName?.text ??
+          competitor.name ??
+          'unknown'
+        }:`,
+        error.message
+      );
+
+      results.push({
+        name:
+          competitor.displayName?.text ??
+          competitor.name ??
+          'Unknown competitor',
+
+        rating:
+          typeof competitor.rating ===
+          'number'
+            ? competitor.rating
+            : null,
+
+        reviewCount:
+          typeof competitor.userRatingCount ===
+          'number'
+            ? competitor.userRatingCount
+            : null,
+
+        responseRate:
+          null,
+
+        responseRateStatus:
+          'unavailable',
+
+        velocity:
+          null,
+
+        velocityTrend:
+          'insufficient_data',
+
+        reviewsCollected:
+          0,
+
+        velocitySampleBased:
+          true,
+
+        note:
+          'Competitor review data was unavailable for this business.',
+      });
     }
-  );
-}
-
-// =========================================================
-// SAFE REPLY GENERATION
-// =========================================================
-
-async function safeGenerateReviewReplies(
-  reviews
-) {
-  try {
-    return await generateReviewReplies(
-      reviews
-    );
-  } catch (error) {
-    console.error(
-      'Reply generation failed:',
-      error.message
-    );
-
-    return [];
   }
+
+  return results;
 }
 
 // =========================================================
-// MAIN ANALYSIS ENDPOINT
+// ANALYSE BUSINESS
 // =========================================================
 
-app.post(
-  '/analyse',
-  async (req, res) => {
-    try {
-      const {
-        businessName,
-        location,
-      } = req.body;
+app.post('/analyse', async (req, res) => {
+  try {
+    const {
+      businessName,
+      location,
+    } = req.body ?? {};
 
-      // -----------------------------------------------------
-      // VALIDATION
-      // -----------------------------------------------------
+    const businessNameTrimmed =
+      String(businessName).trim();
+
+    const locationTrimmed =
+      String(location).trim();
 
       if (
-        !businessName ||
-        !location
+        businessNameTrimmed.length === 0 ||
+        locationTrimmed.length === 0
       ) {
         return res
           .status(400)
           .json({
             error:
-              'businessName and location are required.',
+              'businessName and location cannot be empty.',
           });
       }
 
       // -----------------------------------------------------
-      // API KEY VALIDATION
+      // GOOGLE TEXT SEARCH
       // -----------------------------------------------------
 
-      if (
-        !GOOGLE_PLACES_API_KEY
-      ) {
+      if (!GOOGLE_PLACES_API_KEY) {
         return res
           .status(500)
           .json({
@@ -2013,21 +2054,6 @@ app.post(
               'Google Places API key is not configured.',
           });
       }
-
-      if (
-        !GOOGLE_PLACES_LEGACY_API_KEY
-      ) {
-        return res
-          .status(500)
-          .json({
-            error:
-              'Google Places Legacy API key is not configured.',
-          });
-      }
-
-      // =====================================================
-      // 1. INITIAL BUSINESS SEARCH
-      // =====================================================
 
       const searchResponse =
         await fetchWithTimeout(
@@ -2057,14 +2083,13 @@ app.post(
 
             body: JSON.stringify({
               textQuery:
-                `${businessName}, ${location}`,
+                `${businessNameTrimmed}, ${locationTrimmed}`,
 
               maxResultCount:
-                5,
+                10,
             }),
           },
-
-          12000
+          15000
         );
 
       const searchData =
@@ -2075,22 +2100,27 @@ app.post(
           .status(502)
           .json({
             error:
-              'Google Places business search failed.',
-
-            details:
-              searchData.error
-                ?.message ??
-              'Unknown Google API error.',
+              searchData.error?.message ??
+              'Google Places search failed.',
           });
       }
-
-      // =====================================================
-      // 2. INITIAL CANDIDATES
-      // =====================================================
 
       let places =
         searchData.places ??
         [];
+
+      // -----------------------------------------------------
+      // BUSINESS FALLBACK RESOLUTION
+      // -----------------------------------------------------
+
+      places =
+        await resolveBusinessCandidates({
+          places,
+          businessName:
+            businessNameTrimmed,
+          location:
+            locationTrimmed,
+        });
 
       if (
         places.length === 0
@@ -2099,151 +2129,188 @@ app.post(
           .status(404)
           .json({
             error:
-              `No business found for "${businessName}" in "${location}".`,
+              'No matching business was found.',
           });
       }
 
-      // =====================================================
-      // 3. RESOLVE GENERIC PLACES
-      // =====================================================
-
-      places =
-        await resolveBusinessCandidates({
-          places,
-          businessName,
-          location,
-        });
-
-      // =====================================================
-      // 4. SELECT ACTUAL BUSINESS
-      // =====================================================
-
-      const place =
+      const selectedBusiness =
         selectBestBusinessCandidate(
           places,
-          businessName,
-          location
+          businessNameTrimmed,
+          locationTrimmed
         );
 
+      if (
+        !selectedBusiness?.id
+      ) {
+        return res
+          .status(404)
+          .json({
+            error:
+              'Unable to resolve a valid business.',
+          });
+      }
+
       console.log(
-        'SELECTED BUSINESS:',
-        JSON.stringify(
-          place,
-          null,
-          2
-        )
+        'FINAL SELECTED BUSINESS:',
+        {
+          id:
+            selectedBusiness.id,
+
+          name:
+            selectedBusiness
+              .displayName?.text,
+
+          rating:
+            selectedBusiness.rating,
+
+          reviewCount:
+            selectedBusiness
+              .userRatingCount,
+
+          address:
+            selectedBusiness
+              .formattedAddress,
+
+          primaryType:
+            selectedBusiness
+              .primaryType,
+        }
       );
 
-      // =====================================================
-      // 5. LEGACY PLACE DETAILS + REVIEWS
-      // =====================================================
+      // -----------------------------------------------------
+      // GOOGLE LEGACY PLACE DETAILS
+      // Used because the assignment requires actual
+      // review text and the current Places flow only exposes
+      // a limited review sample.
+      // -----------------------------------------------------
 
-      const legacyUrl =
+      if (
+        !GOOGLE_PLACES_LEGACY_API_KEY
+      ) {
+        return res
+          .status(500)
+          .json({
+            error:
+              'Google Places Legacy API key is not configured.',
+          });
+      }
+
+      const detailsUrl =
         new URL(
           'https://maps.googleapis.com/maps/api/place/details/json'
         );
 
-      legacyUrl.searchParams.set(
+      detailsUrl.searchParams.set(
         'place_id',
-        place.id
+        selectedBusiness.id
       );
 
-      legacyUrl.searchParams.set(
+      detailsUrl.searchParams.set(
         'fields',
         [
           'place_id',
           'name',
-          'formatted_address',
           'rating',
           'user_ratings_total',
-          'reviews',
+          'formatted_address',
           'geometry',
+          'type',
           'types',
+          'reviews',
+          'url',
         ].join(',')
       );
 
-      legacyUrl.searchParams.set(
+      detailsUrl.searchParams.set(
         'reviews_sort',
         'newest'
       );
 
-      legacyUrl.searchParams.set(
+      detailsUrl.searchParams.set(
         'key',
         GOOGLE_PLACES_LEGACY_API_KEY
       );
 
-      const legacyResponse =
+      const detailsResponse =
         await fetchWithTimeout(
-          legacyUrl,
+          detailsUrl,
           {},
-          12000
+          15000
         );
 
-      const legacyData =
-        await legacyResponse.json();
-
-      if (!legacyResponse.ok) {
-        return res
-          .status(502)
-          .json({
-            error:
-              'Google Places Legacy request failed.',
-
-            details:
-              legacyData.error_message ??
-              'Unknown Google API error.',
-          });
-      }
+      const detailsData =
+        await detailsResponse.json();
 
       if (
-        legacyData.status !==
-        'OK'
+        !detailsResponse.ok ||
+        detailsData.status !== 'OK'
       ) {
         return res
           .status(502)
           .json({
             error:
-              'Google Places Legacy returned an error.',
-
-            details:
-              legacyData.error_message ??
-              legacyData.status ??
-              'Unknown Google API error.',
+              detailsData.error_message ??
+              'Google Place Details request failed.',
           });
       }
 
       const details =
-        legacyData.result ??
+        detailsData.result ??
         {};
 
-      // =====================================================
-      // 6. NORMALIZE REVIEWS
-      // =====================================================
+      // -----------------------------------------------------
+      // NORMALIZE + DEDUPLICATE REVIEWS
+      // -----------------------------------------------------
 
       const rawReviews =
         details.reviews ??
         [];
 
       const reviews =
-        normalizeReviews(
-          rawReviews
+        deduplicateReviews(
+          normalizeReviews(
+            rawReviews
+          )
         );
 
-      // =====================================================
-      // 7. DETERMINISTIC METRICS
-      // =====================================================
+      console.log(
+        'REVIEWS COLLECTED:',
+        reviews.length
+      );
+
+      console.log(
+        'REVIEWS WITH TEXT:',
+        reviews.filter(
+          (review) =>
+            review.text.length > 0
+        ).length
+      );
+
+      // -----------------------------------------------------
+      // DETERMINISTIC REVIEW METRICS
+      // -----------------------------------------------------
 
       const metrics =
         calculateReviewMetrics(
           reviews
         );
 
-      // =====================================================
-      // 8. SECONDARY ANALYSIS IN PARALLEL
-      // =====================================================
+      // -----------------------------------------------------
+      // SAMPLE VELOCITY
+      // -----------------------------------------------------
+
+      const sampleVelocity =
+        calculateSampleVelocity(
+          reviews
+        );
+
+      // -----------------------------------------------------
+      // PARALLEL ANALYSIS
+      // -----------------------------------------------------
 
       const [
-        aiAnalysis,
+        semanticAnalysis,
         competitorSearch,
         suggestedReplies,
       ] =
@@ -2253,23 +2320,23 @@ app.post(
           ),
 
           findCompetitors({
-            place,
+            place:
+              selectedBusiness,
+
             details,
           }).catch(
             (error) => {
               console.error(
-                'Competitor discovery failed:',
+                'Competitor search failed:',
                 error.message
               );
 
               return {
                 competitors: [],
-
                 searchType:
                   null,
-
                 note:
-                  'Competitor discovery was unavailable for this run.',
+                  'Competitor search was unavailable for this run.',
               };
             }
           ),
@@ -2279,33 +2346,30 @@ app.post(
           ),
         ]);
 
-      // =====================================================
-      // 9. COMPETITOR COMPARISON
-      // =====================================================
+      // -----------------------------------------------------
+      // COMPETITOR COMPARISON
+      // -----------------------------------------------------
 
-      const competitors =
-        await buildCompetitorComparison(
-          competitorSearch
-            .competitors ??
-            []
-        );
+      let competitors = [];
 
-      // =====================================================
-      // 10. DATA QUALITY
-      // =====================================================
+      if (
+        competitorSearch?.competitors
+          ?.length
+      ) {
+        competitors =
+          await buildCompetitorComparison(
+            competitorSearch.competitors
+          );
+      }
 
-      const reviewsWithText =
-        reviews.filter(
-          (review) =>
-            review.text.length > 0
-        );
-
-      // =====================================================
-      // 11. RESPONSE RATE
-      // =====================================================
-
-      // Google Places does not expose owner response status.
-      // Never fabricate this metric.
+      // -----------------------------------------------------
+      // BUSINESS RESPONSE RATE
+      // -----------------------------------------------------
+      //
+      // Google Places review objects do not expose a reliable
+      // owner-response field. Therefore we do not estimate
+      // response rate from missing data.
+      // -----------------------------------------------------
 
       const responseRate =
         null;
@@ -2316,9 +2380,9 @@ app.post(
       const responseRateNote =
         'Google Places review data does not expose business-owner response status.';
 
-      // =====================================================
-      // 12. NEGATIVE REVIEW AVAILABILITY
-      // =====================================================
+      // -----------------------------------------------------
+      // NEGATIVE REVIEW SUMMARY
+      // -----------------------------------------------------
 
       const negativeReviews =
         reviews.filter(
@@ -2333,147 +2397,202 @@ app.post(
         );
 
       const negativeReviewSummary = {
-        totalNegativeReviews:
+        total:
           negativeReviews.length,
 
-        negativeReviewsWithText:
+        withText:
           negativeReviewsWithText.length,
 
-        negativeReviewsWithoutText:
+        withoutText:
           negativeReviews.length -
           negativeReviewsWithText.length,
 
         note:
           negativeReviews.length === 0
-            ? 'No negative reviews were present in the collected Google sample.'
+            ? 'No negative reviews were present in the collected Google review sample.'
             : negativeReviewsWithText.length === 0
-              ? 'Negative reviews were present in the collected Google sample, but none contained usable review text for response drafting.'
-              : 'Negative reviews with usable text can be reviewed and drafted for response.',
+              ? 'Negative reviews were present, but none contained usable review text in the collected sample.'
+              : 'Negative review counts are based on the collected Google review sample.',
       };
 
-      // =====================================================
-      // 13. FINAL RESPONSE
-      // =====================================================
+      // -----------------------------------------------------
+      // UNANSWERED REVIEWS
+      // -----------------------------------------------------
+      //
+      // Important:
+      // Google Places does not expose owner-response status,
+      // so these cannot honestly be labelled "unanswered".
+      //
+      // We therefore expose eligible negative reviews while
+      // explicitly marking response status as unknown.
+      // -----------------------------------------------------
 
-      return res.json({
+      const unanswered =
+        negativeReviewsWithText.map(
+          (review) => {
+            const generatedReply =
+              suggestedReplies.find(
+                (reply) =>
+                  reply.reviewId ===
+                  review.id
+              );
+
+            return {
+              reviewId:
+                review.id,
+
+              rating:
+                review.rating,
+
+              text:
+                review.text,
+
+              suggestedReply:
+                generatedReply
+                  ?.suggestedReply ??
+                null,
+
+              responseStatus:
+                'unknown',
+
+              responseStatusNote:
+                'Google Places does not expose whether the business has already responded to this review.',
+            };
+          }
+        );
+
+      // -----------------------------------------------------
+      // SOURCE INFORMATION
+      // -----------------------------------------------------
+
+      const sources = [
+        {
+          platform:
+            'Google Places API (Legacy)',
+
+          reviewsCollected:
+            reviews.length,
+
+          method:
+            'Place Details with reviews_sort=newest',
+
+          reliability:
+            'Primary Google review data for the resolved business.',
+
+          durability:
+            'Google Places exposes only a limited review sample; this implementation does not claim to represent the full review history.',
+
+          limitation:
+            'Review response status and full review history are not available through this endpoint.',
+        },
+      ];
+
+      // -----------------------------------------------------
+      // PROCESSING NOTES
+      // -----------------------------------------------------
+
+      const processing = {
+        reviewSample:
+          `Analysed ${reviews.length} Google review(s), of which ${metrics.reviewsWithText} contained text.`,
+
+        reviewDataQuality:
+          'Reviews were normalized, validated, and deduplicated before analysis.',
+
+        velocity:
+          'Review velocity is calculated from the collected sample only and should not be interpreted as the business full historical review velocity.',
+
+        semanticAnalysis:
+          semanticAnalysis.analysisNote,
+
+        competitors:
+          competitorSearch.note,
+
+        partialFailures:
+          'Partial failures in semantic analysis, reply generation, or competitor review collection do not invalidate the deterministic business metrics.',
+      };
+
+      // -----------------------------------------------------
+      // BUILD FINAL RESPONSE
+      // -----------------------------------------------------
+
+      const responsePayload = {
         business: {
           name:
             details.name ??
-            place.displayName?.text ??
-            businessName,
-
-          address:
-            details.formatted_address ??
-            place.formattedAddress ??
-            location,
-
-          placeId:
-            details.place_id ??
-            place.id,
+            selectedBusiness
+              .displayName?.text ??
+            businessNameTrimmed,
 
           rating:
             details.rating ??
+            selectedBusiness.rating ??
             null,
 
           reviewCount:
             details.user_ratings_total ??
+            selectedBusiness
+              .userRatingCount ??
             null,
 
           lastReviewDate:
             metrics.reviewDates.last,
 
-          primaryType:
-            place.primaryType ??
-            getCandidatePrimaryType(
-              place
-            ) ??
+          address:
+            details.formatted_address ??
+            selectedBusiness
+              .formattedAddress ??
+            null,
+
+          placeId:
+            details.place_id ??
+            selectedBusiness.id ??
+            null,
+
+          url:
+            details.url ??
             null,
         },
 
-        dataQuality: {
-          totalBusinessReviews:
-            details.user_ratings_total ??
-            null,
+        sources,
 
-          reviewsCollected:
-            reviews.length,
+        distribution:
+          metrics.ratingDistribution,
 
-          reviewsWithText:
-            reviewsWithText.length,
+        velocity: {
+          perMonth:
+            sampleVelocity.perMonth,
 
-          analysisCoverage:
-            reviewsWithText.length >=
-            20
-              ? 'good'
-              : 'limited',
+          trend:
+            sampleVelocity.trend,
+
+          monthsCovered:
+            metrics.velocity
+              .monthsCovered,
+
+          sampleBased:
+            true,
 
           note:
-            'Google Places returns a limited review sample. Metrics and semantic analysis derived from collected reviews describe the available sample, not the full review history.',
-
-          velocityNote:
-            'Review velocity is calculated from the collected sample only and should not be interpreted as the business full historical review velocity.',
+            'Calculated from the limited collected Google review sample only.',
         },
-
-        sources: [
-          {
-            platform:
-              'Google Places API (Legacy)',
-
-            reviewsCollected:
-              reviews.length,
-
-            method:
-              'Places API (New) Text Search + Places API (Legacy) Place Details',
-
-            reliability:
-              'High for business metadata; limited for review volume because only a small review sample is returned.',
-
-            durability:
-              'Google recommends migrating away from the legacy Places API where possible.',
-          },
-        ],
-
-        metrics,
 
         themes:
-          aiAnalysis.themes,
+          semanticAnalysis.themes ??
+          [],
 
         strengths:
-          aiAnalysis.strengths,
+          semanticAnalysis.strengths ??
+          [],
 
         weaknesses:
-          aiAnalysis.weaknesses,
+          semanticAnalysis.weaknesses ??
+          [],
 
-        aiAnalysis: {
-          model:
-            GEMINI_MODEL,
+        negativeReviewSummary,
 
-          note:
-            aiAnalysis.analysisNote,
+        unanswered,
 
-          status:
-            aiAnalysis.analysisStatus ??
-            'available',
-        },
-
-        competitorSearch: {
-          type:
-            competitorSearch.searchType,
-
-          radiusMeters:
-            5000,
-
-          note:
-            competitorSearch.note,
-        },
-
-        processing: {
-          status:
-            'complete',
-
-          note:
-            'Primary business metadata and review metrics were collected first. Secondary semantic, competitor, and reply analysis were processed independently so partial failures do not invalidate the report.',
-        },
+        suggestedReplies,
 
         competitors,
 
@@ -2483,39 +2602,59 @@ app.post(
 
         responseRateNote,
 
-        negativeReviewSummary,
-
-        unanswered:
-          suggestedReplies,
-
-        suggestedReplies,
-
         reviews,
-      });
+
+        processing,
+      };
+
+      console.log(
+        'ANALYSIS COMPLETE:',
+        {
+          business:
+            responsePayload
+              .business.name,
+
+          rating:
+            responsePayload
+              .business.rating,
+
+          totalReviewCount:
+            responsePayload
+              .business.reviewCount,
+
+          reviewsSampled:
+            reviews.length,
+
+          reviewsWithText:
+            metrics.reviewsWithText,
+
+          themes:
+            responsePayload
+              .themes.length,
+
+          competitors:
+            competitors.length,
+
+          suggestedReplies:
+            suggestedReplies.length,
+        }
+      );
+
+      return res.json(
+        responsePayload
+      );
     } catch (error) {
       console.error(
-        'Analysis error:',
+        'ANALYSIS ERROR:',
         error
       );
 
-      const isTimeout =
-        error?.name ===
-        'AbortError';
-
       return res
-        .status(
-          isTimeout
-            ? 504
-            : 500
-        )
+        .status(500)
         .json({
           error:
-            isTimeout
-              ? 'An upstream service took too long to respond.'
-              : 'Unexpected server error.',
-
-          details:
-            error.message,
+            error.message ??
+            'Unexpected analysis error.',
         });
     }
   }
@@ -2530,7 +2669,7 @@ app.listen(
   '0.0.0.0',
   () => {
     console.log(
-      `NeuraLake API running on http://localhost:${PORT}`
+      `NeuraLake Reputation API running on port ${PORT}`
     );
   }
 );
