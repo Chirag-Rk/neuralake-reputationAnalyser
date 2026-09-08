@@ -34,24 +34,6 @@ export default function HomeScreen() {
 
   return (
     <SafeAreaView style={styles.safeArea}>
-      {/* ========================================================= */}
-      {/* BACKGROUND VISUAL                                         */}
-      {/* Kept outside ScrollView so it stays behind the UI.        */}
-      {/* ========================================================= */}
-
-      <Image
-        source={require('../../assets/images/reputation-bg.png')}
-        style={styles.backgroundImage}
-        resizeMode="contain"
-        pointerEvents="none"
-      />
-
-      {/* Soft fade at the bottom of the background visual */}
-      <View
-        pointerEvents="none"
-        style={styles.backgroundFade}
-      />
-
       <KeyboardAvoidingView
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}
@@ -61,6 +43,21 @@ export default function HomeScreen() {
           keyboardShouldPersistTaps="handled"
           showsVerticalScrollIndicator={false}
         >
+          {/* ===================================================== */}
+          {/* SCROLLING BACKGROUND                                   */}
+          {/* ===================================================== */}
+
+          <View
+            pointerEvents="none"
+            style={styles.backgroundContainer}
+          >
+            <Image
+              source={require('../../assets/images/reputation-bg.png')}
+              style={styles.backgroundImage}
+              resizeMode="contain"
+            />
+          </View>
+
           {/* ===================================================== */}
           {/* HEADER                                                 */}
           {/* ===================================================== */}
@@ -322,47 +319,37 @@ const styles = StyleSheet.create({
     paddingHorizontal: 22,
     paddingTop: 18,
     paddingBottom: 42,
+    position: 'relative',
   },
 
   /* ============================================================= */
   /* BACKGROUND                                                    */
   /* ============================================================= */
 
-  backgroundImage: {
+  /*
+   * The background is deliberately inside the ScrollView.
+   * This makes the illustration move together with the page.
+   */
+
+    backgroundContainer: {
     position: 'absolute',
-
-    /*
-     * Deliberately placed behind the content.
-     * This is outside the ScrollView, so it won't move
-     * independently from the screen content.
-     */
-    top: 95,
-    right: -125,
-
-    width: 560,
-    height: 720,
-
-    opacity: 0.22,
-
-    zIndex: 0,
-  },
-
-  backgroundFade: {
-    position: 'absolute',
-
-    /*
-     * This subtle white fade keeps the lower form area
-     * extremely readable without hiding the image.
-     */
-    top: 90,
+    top: 40,
     left: 0,
     right: 0,
-    height: 720,
+    
+    height: 1050,
+    zIndex: 0,
+    overflow: 'hidden',
+    },
 
-    backgroundColor: 'rgba(245, 247, 251, 0.10)',
-
-    zIndex: 1,
-  },
+    backgroundImage: {
+    position: 'absolute',
+    width: 800,
+    height: 800,
+    top: -85,
+    right: -180,
+    opacity: 0.18,
+    },
 
   /* ============================================================= */
   /* HEADER                                                        */
@@ -372,42 +359,33 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'flex-start',
     justifyContent: 'space-between',
-
     marginBottom: 56,
+    zIndex: 2,
   },
 
   logo: {
     fontSize: 27,
     lineHeight: 32,
-
     fontWeight: '800',
     color: '#101828',
-
     letterSpacing: -0.8,
   },
 
   eyebrow: {
     marginTop: 6,
-
     fontSize: 11,
     lineHeight: 15,
-
     fontWeight: '800',
     letterSpacing: 2.1,
-
     color: '#667085',
   },
 
   headerStatus: {
     width: 12,
     height: 12,
-
     marginTop: 8,
-
     borderRadius: 6,
-
     backgroundColor: '#EFF6FF',
-
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -415,9 +393,7 @@ const styles = StyleSheet.create({
   headerStatusDot: {
     width: 5,
     height: 5,
-
     borderRadius: 3,
-
     backgroundColor: '#2563EB',
   },
 
@@ -427,69 +403,51 @@ const styles = StyleSheet.create({
 
   hero: {
     marginBottom: 38,
+    zIndex: 2,
   },
 
   heroAccent: {
     alignSelf: 'flex-start',
-
     flexDirection: 'row',
     alignItems: 'center',
-
     marginBottom: 13,
-
     paddingHorizontal: 10,
     paddingVertical: 6,
-
     borderRadius: 9,
-
     backgroundColor: 'rgba(239, 246, 255, 0.92)',
   },
 
   heroAccentDot: {
     width: 6,
     height: 6,
-
     marginRight: 7,
-
     borderRadius: 3,
-
     backgroundColor: '#2563EB',
   },
 
   heroAccentText: {
     fontSize: 9,
-
     fontWeight: '800',
     letterSpacing: 1.4,
-
     color: '#2563EB',
   },
 
   title: {
     maxWidth: 700,
-
     fontSize: 39,
     lineHeight: 45,
-
     fontWeight: '800',
-
     color: '#101828',
-
     letterSpacing: -1.6,
   },
 
   subtitle: {
     marginTop: 18,
-
     maxWidth: 680,
-
     fontSize: 17,
     lineHeight: 27,
-
     fontWeight: '400',
-
     color: '#667085',
-
     letterSpacing: -0.15,
   },
 
@@ -499,6 +457,7 @@ const styles = StyleSheet.create({
 
   form: {
     gap: 20,
+    zIndex: 2,
   },
 
   field: {
@@ -508,45 +467,38 @@ const styles = StyleSheet.create({
   label: {
     fontSize: 15,
     lineHeight: 20,
-
     fontWeight: '700',
-
     color: '#344054',
   },
 
   inputWrapper: {
     height: 64,
-
     flexDirection: 'row',
     alignItems: 'center',
-
     borderRadius: 18,
-
     borderWidth: 1.5,
     borderColor: '#D0D5DD',
-
     backgroundColor: 'rgba(255, 255, 255, 0.96)',
   },
 
   inputWrapperActive: {
     borderColor: '#93B4F8',
-
     backgroundColor: '#FFFFFF',
 
     shadowColor: '#2563EB',
+
     shadowOffset: {
       width: 0,
       height: 3,
     },
+
     shadowOpacity: 0.06,
     shadowRadius: 8,
-
     elevation: 1,
   },
 
   inputIcon: {
     width: 54,
-
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -554,27 +506,21 @@ const styles = StyleSheet.create({
   buildingIcon: {
     fontSize: 26,
     lineHeight: 28,
-
     color: '#667085',
   },
 
   locationIcon: {
     fontSize: 30,
     lineHeight: 30,
-
     color: '#667085',
   },
 
   input: {
     flex: 1,
-
     height: '100%',
-
     paddingRight: 17,
     paddingLeft: 0,
-
     fontSize: 17,
-
     color: '#101828',
   },
 
@@ -584,13 +530,9 @@ const styles = StyleSheet.create({
 
   button: {
     minHeight: 62,
-
     marginTop: 27,
-
     paddingHorizontal: 24,
-
     borderRadius: 18,
-
     backgroundColor: '#2563EB',
 
     flexDirection: 'row',
@@ -606,15 +548,14 @@ const styles = StyleSheet.create({
 
     shadowOpacity: 0.18,
     shadowRadius: 16,
-
     elevation: 4,
+
+    zIndex: 2,
   },
 
   buttonDisabled: {
     backgroundColor: '#D0D5DD',
-
     shadowOpacity: 0,
-
     elevation: 0,
   },
 
@@ -631,9 +572,7 @@ const styles = StyleSheet.create({
   buttonText: {
     fontSize: 17,
     lineHeight: 22,
-
     fontWeight: '800',
-
     color: '#FFFFFF',
   },
 
@@ -643,12 +582,9 @@ const styles = StyleSheet.create({
 
   buttonArrow: {
     marginLeft: 12,
-
     fontSize: 28,
     lineHeight: 28,
-
     fontWeight: '400',
-
     color: '#FFFFFF',
   },
 
@@ -658,15 +594,11 @@ const styles = StyleSheet.create({
 
   infoBox: {
     marginTop: 30,
-
     paddingHorizontal: 20,
     paddingTop: 21,
     paddingBottom: 17,
-
     borderRadius: 22,
-
     backgroundColor: 'rgba(255, 255, 255, 0.96)',
-
     borderWidth: 1,
     borderColor: '#E4E7EC',
 
@@ -679,8 +611,9 @@ const styles = StyleSheet.create({
 
     shadowOpacity: 0.045,
     shadowRadius: 12,
-
     elevation: 2,
+
+    zIndex: 2,
   },
 
   infoHeader: {
@@ -690,73 +623,56 @@ const styles = StyleSheet.create({
   infoTitle: {
     fontSize: 21,
     lineHeight: 27,
-
     fontWeight: '800',
-
     color: '#344054',
-
     letterSpacing: -0.4,
   },
 
   infoSubtitle: {
     marginTop: 4,
-
     fontSize: 13,
     lineHeight: 19,
-
     color: '#98A2B3',
   },
 
   infoRow: {
     flexDirection: 'row',
     alignItems: 'flex-start',
-
     paddingVertical: 10,
   },
 
   featureIcon: {
     width: 42,
     height: 42,
-
     borderRadius: 13,
-
     backgroundColor: '#EFF6FF',
-
     alignItems: 'center',
     justifyContent: 'center',
   },
 
   featureIconText: {
     fontSize: 19,
-
     fontWeight: '700',
-
     color: '#2563EB',
   },
 
   infoCopy: {
     flex: 1,
-
     marginLeft: 13,
-
     paddingTop: 1,
   },
 
   infoText: {
     fontSize: 15,
     lineHeight: 21,
-
     fontWeight: '700',
-
     color: '#475467',
   },
 
   infoDescription: {
     marginTop: 2,
-
     fontSize: 12,
     lineHeight: 18,
-
     color: '#98A2B3',
   },
 
@@ -764,11 +680,8 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-
     marginTop: 12,
-
     paddingTop: 15,
-
     borderTopWidth: 1,
     borderTopColor: '#EAECF0',
   },
@@ -776,20 +689,15 @@ const styles = StyleSheet.create({
   footerDot: {
     width: 7,
     height: 7,
-
     marginRight: 8,
-
     borderRadius: 4,
-
     backgroundColor: '#2563EB',
   },
 
   footerText: {
     fontSize: 11,
     lineHeight: 17,
-
     fontWeight: '600',
-
     color: '#98A2B3',
   },
 
@@ -799,16 +707,14 @@ const styles = StyleSheet.create({
 
   bottomNote: {
     alignItems: 'center',
-
     marginTop: 18,
+    zIndex: 2,
   },
 
   bottomNoteText: {
     fontSize: 11,
     lineHeight: 17,
-
     textAlign: 'center',
-
     color: '#98A2B3',
   },
 });

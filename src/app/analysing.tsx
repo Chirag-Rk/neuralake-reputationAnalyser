@@ -3,13 +3,14 @@ import { useEffect, useState } from 'react';
 import {
   ActivityIndicator,
   Pressable,
-  SafeAreaView,
   StyleSheet,
   Text,
   View,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { setAnalysis } from './analysisStore';
 
-const API_URL = 'http://192.168.1.38:3000';
+const API_URL = 'http://192.168.1.33:3000';
 
 const STEPS = [
   'Found business',
@@ -100,12 +101,13 @@ console.log('Analysis received successfully');
 
       await new Promise((resolve) => setTimeout(resolve, 500));
 
+      setAnalysis(data);
+
       router.replace({
         pathname: '/results',
         params: {
           businessName: businessName.trim(),
           location: location.trim(),
-          analysis: JSON.stringify(data),
         },
       });
     } catch (err) {

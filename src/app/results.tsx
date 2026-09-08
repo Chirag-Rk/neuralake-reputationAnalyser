@@ -1,13 +1,14 @@
 import { router, useLocalSearchParams } from 'expo-router';
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import {
-  Pressable,
-  ScrollView,
-  StyleSheet,
-  Text,
-  View,
+    Pressable,
+    ScrollView,
+    StyleSheet,
+    Text,
+    View,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { getAnalysis } from './analysisStore';
 
 // =========================================================
 // TYPES
@@ -54,7 +55,7 @@ type SuggestedReply = {
   responseStatusNote?: string;
 };
 
-type Analysis = {
+export type Analysis = {
   business: {
     name: string;
     address: string;
@@ -280,7 +281,6 @@ export default function ResultsScreen() {
     useLocalSearchParams<{
       businessName?: string | string[];
       location?: string | string[];
-      analysis?: string | string[];
     }>();
 
   const businessName =
@@ -291,11 +291,6 @@ export default function ResultsScreen() {
   const location =
     getParamValue(
       params.location
-    );
-
-  const analysisParam =
-    getParamValue(
-      params.analysis
     );
 
   const [showThemes, setShowThemes] =
@@ -319,29 +314,7 @@ export default function ResultsScreen() {
   const [selectedReplyId, setSelectedReplyId] =
     useState<string | null>(null);
 
-  // =======================================================
-  // PARSE BACKEND RESPONSE
-  // =======================================================
-
-  const analysis =
-    useMemo<Analysis | null>(() => {
-      if (!analysisParam) {
-        return null;
-      }
-
-      try {
-        return JSON.parse(
-          analysisParam
-        ) as Analysis;
-      } catch (error) {
-        console.error(
-          'Failed to parse analysis:',
-          error
-        );
-
-        return null;
-      }
-    }, [analysisParam]);
+  const analysis = getAnalysis();
 
   // =======================================================
   // SAFE FALLBACK
@@ -1329,7 +1302,7 @@ export default function ResultsScreen() {
                   styles.sectionTitle
                 }
               >
-                Recurring themes
+                Customer themes
               </Text>
 
               <Text

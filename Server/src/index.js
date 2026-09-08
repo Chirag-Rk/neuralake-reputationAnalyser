@@ -1357,24 +1357,69 @@ ${JSON.stringify(
   const parsed =
     JSON.parse(text);
 
+  const normalizedEvidenceText =
+    reviewsWithText.map((review) =>
+      review.text
+        .toLowerCase()
+        .replace(/\s+/g, ' ')
+        .trim()
+    );
+
   const themes =
-    (parsed.themes ?? []).map((theme) => {
-      const mentions =
-        Number(theme.mentions) || 0;
+    (parsed.themes ?? [])
+      .map((theme) => {
+        const quotes =
+          Array.isArray(theme.quotes)
+            ? theme.quotes
+                .filter(
+                  (quote) =>
+                    typeof quote === 'string' &&
+                    quote.trim().length > 0
+                )
+                .map((quote) => quote.trim())
+            : [];
 
-      const evidenceStrength =
-        mentions >= 3
-          ? 'strong'
-          : mentions === 2
-            ? 'moderate'
-            : 'limited';
+        // Keep only quotes that actually occur
+        // in the supplied review evidence.
+        const verifiedQuotes =
+          quotes.filter((quote) => {
+            const normalizedQuote =
+              quote
+                .toLowerCase()
+                .replace(/\s+/g, ' ')
+                .trim();
 
-      return {
-        ...theme,
-        mentions,
-        evidenceStrength,
-      };
-    });
+            return normalizedEvidenceText.some(
+              (reviewText) =>
+                reviewText.includes(normalizedQuote)
+            );
+          });
+
+        const mentions =
+          Math.max(
+            0,
+            Number(theme.mentions) || 0
+          );
+
+        const evidenceStrength =
+          mentions >= 3
+            ? 'strong'
+            : mentions === 2
+              ? 'moderate'
+              : 'limited';
+
+        return {
+          ...theme,
+          mentions,
+          quotes: verifiedQuotes,
+          evidenceStrength,
+        };
+      })
+      .filter(
+        (theme) =>
+          theme.mentions > 0 &&
+          theme.quotes.length > 0
+      );
 
   return {
     themes,
@@ -2553,7 +2598,33 @@ app.post('/analyse', async (req, res) => {
             null,
         },
 
+        dataQuality: {
+          totalBusinessReviews:
+            details.user_ratings_total ??
+            selectedBusiness.userRatingCount ??
+            null,
+
+          reviewsCollected:
+            reviews.length,
+
+          reviewsWithText:
+            metrics.reviewsWithText,
+
+          analysisCoverage:
+            metrics.reviewsWithText >= 20
+              ? 'good'
+              : 'limited',
+
+          note:
+            'Google Places returns a limited review sample. Metrics and semantic analysis describe the available sample, not the full review history.',
+
+          velocityNote:
+            'Review velocity is calculated from the collected sample only and should not be interpreted as the business full historical review velocity.',
+        },
+
         sources,
+
+        metrics,
 
         distribution:
           metrics.ratingDistribution,
